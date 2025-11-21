@@ -1,0 +1,167 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ---------- Base: CSS Variables + Resets ---------- */
+@layer base {
+  :root {
+    --color-bg: 248 249 253;
+    --color-surface: 255 255 255;
+    --color-muted: 245 247 251;
+    --color-border: 222 228 237;
+    --color-fg: 22 27 33;
+    --color-primary: 99 102 241;
+    --color-primary-fg: 255 255 255;
+    --color-secondary: 56 189 248;
+    --color-accent: 168 85 247;
+    --color-success: 34 197 94;
+    --color-warning: 245 158 11;
+    --color-danger: 239 68 68;
+    --color-info: 59 130 246;
+    --radius-md: 0.6rem;
+    --radius-lg: 1rem;
+  }
+
+  .dark {
+    --color-bg: 12 15 22;
+    --color-surface: 20 24 33;
+    --color-muted: 16 20 28;
+    --color-border: 47 54 67;
+    --color-fg: 228 232 241;
+    --color-primary: 139 92 246;
+    --color-primary-fg: 255 255 255;
+    --color-secondary: 56 189 248;
+    --color-accent: 99 102 241;
+  }
+
+  [data-theme="ice"] {
+    --color-primary: 14 165 233;
+    --color-accent: 99 102 241;
+  }
+
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    @apply bg-background text-foreground antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  ::selection {
+    background: rgb(var(--color-primary) / 0.18);
+    color: rgb(var(--color-fg));
+  }
+}
+
+/* ---------- Typography defaults ---------- */
+@layer components {
+  .prose-default {
+    @apply prose prose-neutral max-w-none;
+  }
+  .prose-default :where(h1,h2,h3,h4) {
+    @apply scroll-mt-24;
+  }
+  .prose-default a {
+    color: rgb(var(--color-primary));
+  }
+  .prose-default a:hover {
+    text-decoration: underline;
+  }
+}
+
+/* ---------- Reusable components ---------- */
+@layer components {
+  .card {
+    @apply bg-surface rounded-xl shadow ring-1 ring-border/50;
+  }
+  .glass {
+    @apply bg-white/10 dark:bg-white/5 backdrop-blur-xl ring-1 ring-white/15 rounded-xl;
+  }
+  .btn {
+    @apply inline-flex items-center gap-2 rounded-md px-4 py-2 text-sm font-medium transition ring-1 ring-border/60 shadow-sm hover:shadow focus:outline-none focus-visible:ring-2 active:scale-[.98] disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+  .btn-primary {
+    @apply btn bg-primary text-primary-foreground ring-primary/40 hover:brightness-105;
+  }
+  .btn-ghost {
+    @apply btn bg-transparent ring-transparent hover:bg-muted;
+  }
+  .btn-soft {
+    @apply btn bg-primary/10 text-primary ring-primary/20 hover:bg-primary/15;
+  }
+  .input {
+    @apply block w-full rounded-md border-0 ring-1 ring-inset ring-border/60 bg-surface px-3 py-2 text-sm shadow-sm placeholder:text-foreground/50 focus:ring-2 focus:ring-primary/60 focus:outline-none;
+  }
+  .label {
+    @apply mb-1.5 text-sm font-medium text-foreground/80;
+  }
+  .section-title {
+    @apply text-sm font-semibold m-0;
+  }
+  .help {
+    @apply text-xs text-foreground/60;
+  }
+  .fieldset {
+    @apply space-y-2;
+  }
+  .toolbar {
+    @apply flex flex-wrap items-center gap-2;
+  }
+  .note {
+    @apply text-xs text-foreground/60;
+  }
+  .badge {
+    @apply inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium bg-primary/10 text-primary ring-1 ring-primary/15;
+  }
+  .rb-nav {
+    @apply relative flex items-center gap-3 rounded-lg px-3 py-2 text-sm text-foreground/70 transition hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60;
+  }
+  .rb-nav.active,
+  .rb-nav[aria-current="page"] {
+    @apply bg-primary/10 text-primary ring-1 ring-primary/15;
+  }
+  .rb-icon {
+    @apply h-4 w-4 text-foreground/50 transition group-hover:text-primary;
+  }
+  .table {
+    @apply w-full border-separate border-spacing-0;
+  }
+  .table thead th {
+    @apply sticky top-0 z-10 bg-surface backdrop-blur px-3 py-2 text-left text-xs font-semibold text-foreground/70;
+  }
+  .table tbody td {
+    @apply px-3 py-2 text-sm text-foreground/90;
+  }
+  .table tbody tr {
+    @apply border-b border-border/60;
+  }
+  .table tbody tr:hover {
+    @apply bg-muted/60;
+  }
+  .card .table {
+    max-width: 100%;
+  }
+}
+
+/* ---------- Utilities ---------- */
+@layer utilities {
+  .bg-grid {
+    background-image: theme('backgroundImage.grid');
+    background-size: theme('backgroundSize.grid');
+  }
+  .bg-dot {
+    background-image: theme('backgroundImage.dot');
+    background-size: 10px 10px;
+  }
+  .bg-radial {
+    background-image: theme('backgroundImage.radial');
+  }
+  .text-balance {
+    text-wrap: balance;
+  }
+  .scrollbar {
+    scrollbar-width: thin;
+    scrollbar-color: rgb(var(--color-border)) transparent;
+  }
+  .shadow-soft {
+    box-shadow: 0 1px 0 rgb(255 255 255 / .04) inset, 0 12px 30px rgb(0 0 0 / .12);
+  }
+}

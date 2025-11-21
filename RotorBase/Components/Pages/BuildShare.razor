@@ -1,0 +1,547 @@
+@page "/builds/{BuildId:long}/share"
+@rendermode InteractiveServer
+@using System.Net.Http.Json
+@using System.Text.Json
+@using System.Text.Json.Serialization
+@inject HttpClient Http
+@inject NavigationManager Nav
+@inject UserSession Session
+@implements IDisposable
+
+<h1 class="sr-only">Manage Sharing</h1>
+
+<div class="min-h-[calc(100vh-4rem)] bg-background text-foreground">
+  <div aria-hidden="true" class="pointer-events-none absolute inset-x-0 top-0 h-32 bg-grid opacity-[.12]"></div>
+
+  <section class="container py-6">
+    <div class="mb-5 flex flex-wrap items-center justify-between gap-3">
+      <h2 class="text-2xl font-bold tracking-tight">Manage Sharing</h2>
+      <a class="btn btn-ghost" href=$"/builder/{BuildId}">Back to Builder</a>
+    </div>
+
+    @if (!string.IsNullOrEmpty(ErrorMessage))
+    {
+      <div class="card ring-1 ring-danger/25 bg-danger/5 text-danger px-4 py-2 mb-4">@ErrorMessage</div>
+    }
+    else if (!Session.IsSignedIn)
+    {
+      <div class="card ring-1 ring-info/25 bg-info/5 text-info px-4 py-2 text-sm">Sign in to manage sharing.</div>
+    }
+    else if (IsLoading)
+    {
+      <div class="card px-4 py-3 flex items-center gap-2 text-sm">
+        <svg class="animate-spin h-4 w-4" viewBox="0 0 24 24">
+          <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+          <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4A4 4 0 004 12z"></path>
+        </svg>
+        <span>Loading…</span>
+      </div>
+    }
+    else if (!IsOwner)
+    {
+      <div class="card ring-1 ring-warning/25 bg-warning/5 text-warning px-4 py-2 text-sm">
+        Only the owner can manage sharing for this build.
+      </div>
+    }
+    else
+    {
+      <!-- Inline toast space for invite feedback -->
+      <div class="mb-3 flex flex-wrap items-center gap-2">
+        @if (!string.IsNullOrEmpty(InviteSuccess))
+        {
+          <span class="badge bg-success/15 text-success ring-success/20">@InviteSuccess</span>
+        }
+        @if (!string.IsNullOrEmpty(InviteError))
+        {
+          <span class="badge bg-danger/15 text-danger ring-danger/20">@InviteError</span>
+        }
+      </div>
+
+      <!-- Community Gallery -->
+      <section class="card overflow-hidden mb-4">
+        <div class="px-4 py-3 border-b border-border/60">
+          <h3 class="text-sm font-semibold">Community Gallery</h3>
+        </div>
+        <div class="p-4 space-y-3 text-sm">
+          <p class="text-foreground/70">
+            Publish this build to let others view, clone, and buy the parts list.
+          </p>
+
+          <div class="flex flex-wrap items-center gap-3">
+            <label class="inline-flex items-center gap-3">
+              <input type="checkbox"
+                     class="h-4 w-4 rounded border-border/70 text-primary focus:ring-primary/60"
+                     checked="@IsPublic"
+                     @onchange="TogglePublishAsync"
+                     disabled="@PublishBusy" />
+              <span class="font-medium">
+                @(IsPublic ? "Visible in gallery" : "Not published")
+              </span>
+            </label>
+            <button class="btn btn-primary"
+                    type="button"
+                    disabled="@PublishBusy"
+                    @onclick="() => SetPublishStateAsync(!IsPublic)">
+              @(PublishBusy ? "Saving…" : IsPublic ? "Unpublish" : "Publish")
+            </button>
+          </div>
+
+          @if (IsPublic && !string.IsNullOrWhiteSpace(PublicSlug))
+          {
+            <div class="rounded-md ring-1 ring-info/25 bg-info/5 text-info px-3 py-2">
+              Share link:
+              <a class="font-medium hover:underline" href="@PublicGalleryUrl" target="_blank" rel="noopener">
+                @PublicGalleryUrl
+              </a>
+            </div>
+          }
+
+          @if (!string.IsNullOrEmpty(PublishError))
+          {
+            <div class="rounded-md ring-1 ring-danger/25 bg-danger/5 text-danger px-3 py-2">@PublishError</div>
+          }
+          else if (!string.IsNullOrEmpty(PublishSuccess))
+          {
+            <div class="rounded-md ring-1 ring-success/25 bg-success/5 text-success px-3 py-2">@PublishSuccess</div>
+          }
+        </div>
+      </section>
+
+      <!-- Current Access -->
+      <section class="card overflow-hidden mb-4">
+        <div class="px-4 py-3 border-b border-border/60">
+          <h3 class="text-sm font-semibold">Current Access</h3>
+        </div>
+
+        @if (Shares.Count == 0)
+        {
+          <div class="px-4 py-3 text-sm text-foreground/70">No one else has access yet.</div>
+        }
+        else
+        {
+          <div class="overflow-x-auto">
+            <table class="table">
+              <thead>
+                <tr>
+                  <th>Email</th>
+                  <th>Name</th>
+                  <th>Role</th>
+                  <th class="text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody class="[&>tr:nth-child(odd)]:bg-muted/40">
+                @foreach (var share in Shares)
+                {
+                  <tr>
+                    <td class="align-top">@share.email</td>
+                    <td class="align-top">@share.display_name</td>
+                    <td class="align-top">
+                      <select class="input h-8"
+                              value="@share.role"
+                              @onchange="async e => await UpdateShareRole(share, e.Value?.ToString())">
+                        <option value="viewer">Viewer</option>
+                        <option value="editor">Editor</option>
+                      </select>
+                    </td>
+                    <td class="align-top">
+                      <div class="flex justify-end">
+                        <button class="btn btn-ghost h-8 px-3 text-danger"
+                                @onclick="() => RemoveShare(share)">
+                          Remove
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                }
+              </tbody>
+            </table>
+          </div>
+        }
+      </section>
+
+      <!-- Invite by Email -->
+      <section class="card overflow-hidden mb-4">
+        <div class="px-4 py-3 border-b border-border/60">
+          <h3 class="text-sm font-semibold">Invite by Email</h3>
+        </div>
+        <div class="p-4">
+          <div class="grid gap-3 md:grid-cols-3">
+            <div class="md:col-span-2">
+              <label class="label">Email</label>
+              <input class="input" @bind="InviteEmail" type="email" placeholder="someone@example.com" />
+            </div>
+            <div>
+              <label class="label">Role</label>
+              <select class="input" @bind="InviteRole">
+                <option value="viewer">Viewer</option>
+                <option value="editor">Editor</option>
+              </select>
+            </div>
+          </div>
+          <div class="mt-3 flex justify-end">
+            <button class="btn btn-primary"
+                    @onclick="SendInvite"
+                    disabled="@(InviteBusy || string.IsNullOrWhiteSpace(InviteEmail))">
+              @InviteButtonText
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <!-- Pending Invites -->
+      <section class="card overflow-hidden">
+        <div class="px-4 py-3 border-b border-border/60">
+          <div class="flex flex-wrap items-center justify-between gap-2">
+            <h3 class="text-sm font-semibold">Pending Invites</h3>
+            <span class="text-xs text-foreground/60">Invites expire 7 days after creation.</span>
+          </div>
+        </div>
+
+        @if (Invites.Count == 0)
+        {
+          <div class="px-4 py-3 text-sm text-foreground/70">No pending invites.</div>
+        }
+        else
+        {
+          <div class="overflow-x-auto">
+            <table class="table">
+              <thead>
+                <tr>
+                  <th>Email</th>
+                  <th>Role</th>
+                  <th>Expires</th>
+                  <th>Token</th>
+                  <th class="text-right">Status</th>
+                </tr>
+              </thead>
+              <tbody class="[&>tr:nth-child(odd)]:bg-muted/40">
+                @foreach (var invite in Invites)
+                {
+                  <tr>
+                    <td class="align-top">@invite.email</td>
+                    <td class="align-top capitalize">@invite.role</td>
+                    <td class="align-top">@invite.expires_at.ToLocalTime().ToString("g")</td>
+                    <td class="align-top font-mono text-xs break-all">@invite.token</td>
+                    <td class="align-top">
+                      <div class="flex justify-end">
+                        @if (invite.accepted_by is null)
+                        {
+                          <button class="btn btn-ghost h-8 px-3 text-danger"
+                                  @onclick="() => RevokeInvite(invite)">
+                            Revoke
+                          </button>
+                        }
+                        else
+                        {
+                          <span class="badge bg-success/15 text-success ring-success/20">Accepted</span>
+                        }
+                      </div>
+                    </td>
+                  </tr>
+                }
+              </tbody>
+            </table>
+          </div>
+        }
+      </section>
+    }
+  </section>
+</div>
+
+@code {
+    [Parameter] public long BuildId { get; set; }
+
+    record BuildRoleResponse(BuildInfo? build, string role);
+    record BuildInfo(
+        [property: JsonPropertyName("build_id")] long build_id,
+        [property: JsonPropertyName("user_id")] long? user_id,
+        [property: JsonPropertyName("name")] string name,
+        [property: JsonPropertyName("is_public")] bool is_public,
+        [property: JsonPropertyName("public_slug")] string? public_slug);
+
+    class ShareEntry
+    {
+        public long build_id { get; set; }
+        public long user_id { get; set; }
+        public string? role { get; set; }
+        public string? email { get; set; }
+        public string? display_name { get; set; }
+    }
+
+    class InviteEntry
+    {
+        public long invite_id { get; set; }
+        public string email { get; set; } = string.Empty;
+        public string role { get; set; } = "viewer";
+        public string token { get; set; } = string.Empty;
+        public DateTime expires_at { get; set; }
+        public long? accepted_by { get; set; }
+    }
+
+    List<ShareEntry> Shares = new();
+    List<InviteEntry> Invites = new();
+    bool IsOwner;
+    bool IsLoading = true;
+    string? ErrorMessage;
+    bool IsPublic;
+    string? PublicSlug;
+    bool PublishBusy;
+    string? PublishError;
+    string? PublishSuccess;
+
+    string InviteRole { get; set; } = "viewer";
+    string? InviteEmail;
+    string? InviteError;
+    string? InviteSuccess;
+    bool InviteBusy;
+    string InviteButtonText => InviteBusy ? "Sending…" : "Send Invite";
+
+    protected override async Task OnInitializedAsync()
+    {
+        Session.Changed += OnSessionChanged;
+        await RefreshAsync();
+    }
+
+    void OnSessionChanged() => InvokeAsync(RefreshAsync);
+
+    async Task RefreshAsync()
+    {
+        if (!Session.IsSignedIn)
+        {
+            ErrorMessage = "Sign in to manage sharing.";
+            IsLoading = false;
+            StateHasChanged();
+            return;
+        }
+
+        IsLoading = true;
+        ErrorMessage = null;
+        InviteError = null;
+        InviteSuccess = null;
+        try
+        {
+            var build = await Http.GetFromJsonAsync<BuildRoleResponse>($"/api/builds/{BuildId}");
+            if (build?.role is null)
+            {
+                ErrorMessage = "Unable to load build.";
+                IsLoading = false;
+                StateHasChanged();
+                return;
+            }
+
+            IsOwner = string.Equals(build.role, "owner", StringComparison.OrdinalIgnoreCase);
+            if (!IsOwner)
+            {
+                ErrorMessage = "Only the owner can manage sharing for this build.";
+                IsLoading = false;
+                StateHasChanged();
+                return;
+            }
+
+            Shares = await GetOrEmptyAsync<ShareEntry>($"/api/builds/{BuildId}/shares");
+            Invites = await GetOrEmptyAsync<InviteEntry>($"/api/builds/{BuildId}/invites");
+            IsPublic = build.build?.is_public ?? false;
+            PublicSlug = build.build?.public_slug;
+            PublishError = null;
+        }
+        catch (HttpRequestException ex) when (ex.StatusCode == System.Net.HttpStatusCode.Forbidden)
+        {
+            ErrorMessage = "You do not have permission to manage sharing.";
+        }
+        catch (HttpRequestException ex) when (ex.StatusCode == System.Net.HttpStatusCode.Unauthorized)
+        {
+            ErrorMessage = "Sign in to manage sharing.";
+        }
+        catch (Exception ex)
+        {
+            ErrorMessage = ex.Message;
+        }
+        finally
+        {
+            IsLoading = false;
+            StateHasChanged();
+        }
+    }
+
+    async Task<List<T>> GetOrEmptyAsync<T>(string url)
+    {
+        try
+        {
+            return await Http.GetFromJsonAsync<List<T>>(url) ?? new List<T>();
+        }
+        catch
+        {
+            return new List<T>();
+        }
+    }
+
+    async Task SendInvite()
+    {
+        if (InviteBusy || string.IsNullOrWhiteSpace(InviteEmail)) return;
+        InviteBusy = true;
+        InviteError = null;
+        InviteSuccess = null;
+        try
+        {
+            var resp = await Http.PostAsJsonAsync($"/api/builds/{BuildId}/shares", new { email = InviteEmail, role = InviteRole });
+            if (resp.IsSuccessStatusCode)
+            {
+                InviteSuccess = "Invite sent.";
+                InviteEmail = string.Empty;
+                await RefreshAsync();
+            }
+            else
+            {
+                var detail = await resp.Content.ReadAsStringAsync();
+                InviteError = $"Failed to invite: {(int)resp.StatusCode} {resp.ReasonPhrase}. {detail}";
+            }
+        }
+        catch (Exception ex)
+        {
+            InviteError = ex.Message;
+        }
+        finally
+        {
+            InviteBusy = false;
+        }
+    }
+
+    string? PublicGalleryUrl
+        => string.IsNullOrWhiteSpace(PublicSlug) ? null : Nav.ToAbsoluteUri($"/builds/public/{PublicSlug}").ToString();
+
+    async Task TogglePublishAsync(ChangeEventArgs e)
+    {
+        var makePublic = e.Value switch
+        {
+            bool b => b,
+            string s when bool.TryParse(s, out var parsed) => parsed,
+            _ => false
+        };
+
+        await SetPublishStateAsync(makePublic);
+    }
+
+    async Task SetPublishStateAsync(bool makePublic)
+    {
+        if (PublishBusy || makePublic == IsPublic)
+            return;
+
+        PublishBusy = true;
+        PublishError = null;
+        PublishSuccess = null;
+
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Patch, $"/api/builds/{BuildId}/publish")
+            {
+                Content = JsonContent.Create(new { is_public = makePublic })
+            };
+
+            var resp = await Http.SendAsync(request);
+            if (resp.IsSuccessStatusCode)
+            {
+                var doc = await resp.Content.ReadFromJsonAsync<JsonElement?>();
+                if (doc is JsonElement element)
+                {
+                    if (element.TryGetProperty("public_slug", out var slugNode) && slugNode.ValueKind == JsonValueKind.String)
+                    {
+                        PublicSlug = slugNode.GetString();
+                    }
+                    else if (!makePublic)
+                    {
+                        PublicSlug = null;
+                    }
+                }
+                IsPublic = makePublic;
+                PublishSuccess = makePublic ? "This build is now public." : "Build removed from the gallery.";
+            }
+            else
+            {
+                var detail = await resp.Content.ReadAsStringAsync();
+                PublishError = $"Publish failed: {(int)resp.StatusCode} {resp.ReasonPhrase}. {detail}";
+            }
+        }
+        catch (Exception ex)
+        {
+            PublishError = ex.Message;
+        }
+        finally
+        {
+            PublishBusy = false;
+            StateHasChanged();
+        }
+    }
+
+    async Task UpdateShareRole(ShareEntry entry, string? newRole)
+    {
+        if (string.IsNullOrWhiteSpace(newRole) || string.Equals(entry.role, newRole, StringComparison.OrdinalIgnoreCase))
+            return;
+
+        try
+        {
+            var resp = await Http.PostAsJsonAsync($"/api/builds/{BuildId}/shares", new { user_id = entry.user_id, role = newRole });
+            if (resp.IsSuccessStatusCode)
+            {
+                entry.role = newRole;
+                InviteSuccess = $"Updated {entry.email} to {newRole}.";
+                InviteError = null;
+                StateHasChanged();
+            }
+            else
+            {
+                InviteError = $"Failed to update role: {(int)resp.StatusCode} {resp.ReasonPhrase}";
+            }
+        }
+        catch (Exception ex)
+        {
+            InviteError = ex.Message;
+        }
+    }
+
+    async Task RemoveShare(ShareEntry entry)
+    {
+        try
+        {
+            var resp = await Http.DeleteAsync($"/api/builds/{BuildId}/shares/{entry.user_id}");
+            if (resp.IsSuccessStatusCode)
+            {
+                Shares.Remove(entry);
+                StateHasChanged();
+            }
+            else
+            {
+                InviteError = $"Failed to remove share: {(int)resp.StatusCode} {resp.ReasonPhrase}";
+            }
+        }
+        catch (Exception ex)
+        {
+            InviteError = ex.Message;
+        }
+    }
+
+    async Task RevokeInvite(InviteEntry invite)
+    {
+        try
+        {
+            var resp = await Http.DeleteAsync($"/api/builds/{BuildId}/invites/{invite.invite_id}");
+            if (resp.IsSuccessStatusCode)
+            {
+                Invites.Remove(invite);
+                StateHasChanged();
+            }
+            else
+            {
+                InviteError = $"Failed to revoke invite: {(int)resp.StatusCode} {resp.ReasonPhrase}";
+            }
+        }
+        catch (Exception ex)
+        {
+            InviteError = ex.Message;
+        }
+    }
+
+    public void Dispose()
+    {
+        Session.Changed -= OnSessionChanged;
+    }
+}

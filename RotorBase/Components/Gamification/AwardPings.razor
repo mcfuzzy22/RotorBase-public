@@ -1,0 +1,84 @@
+@using System.Globalization
+@inject HttpClient Http
+@inject IJSRuntime JS
+@implements IAsyncDisposable
+
+@code {
+    private DateTime _sinceUtc = DateTime.UtcNow.AddMinutes(-2);
+    private PeriodicTimer? _timer;
+    private bool _running;
+
+    protected override Task OnInitializedAsync()
+    {
+        _running = true;
+        _timer = new PeriodicTimer(TimeSpan.FromSeconds(12));
+        _ = FetchAsync();
+        _ = PollAsync();
+        return Task.CompletedTask;
+    }
+
+    private async Task PollAsync()
+    {
+        while (_running && _timer is not null && await _timer.WaitForNextTickAsync())
+        {
+            await FetchAsync();
+        }
+    }
+
+    private async Task FetchAsync()
+    {
+        try
+        {
+            var url = $"/api/me/gamification/recent?since={Uri.EscapeDataString(_sinceUtc.ToString("o"))}";
+            var rows = await Http.GetFromJsonAsync<List<Row>>(url);
+            if (rows is not { Count: > 0 })
+            {
+                return;
+            }
+
+            foreach (var row in rows)
+            {
+                var toastText = $"{FormatPoints(row.points)} • {Pretty(row.reason)}";
+                await JS.InvokeVoidAsync("gamify.toast", toastText);
+                if (IsMilestone(row.reason))
+                {
+                    await JS.InvokeVoidAsync("gamify.confetti");
+                }
+
+                var occurred = row.occurred_at.ToUniversalTime();
+                if (occurred >= _sinceUtc)
+                {
+                    _sinceUtc = occurred.AddMilliseconds(1);
+                }
+            }
+        }
+        catch
+        {
+            // Intentionally ignore polling errors; we'll try again on the next tick.
+        }
+    }
+
+    private static string FormatPoints(int points)
+        => points > 0 ? $"+{points}" : points.ToString(CultureInfo.InvariantCulture);
+
+    private static string Pretty(string reason) => reason switch
+    {
+        "build_created" => "Build created",
+        "first_selection" => "First part",
+        "category_completed" => "Category complete",
+        "build_complete" => "Build ready to start",
+        _ => reason.Replace('_', ' ')
+    };
+
+    private static bool IsMilestone(string reason)
+        => reason is "build_complete" or "first_selection";
+
+    public ValueTask DisposeAsync()
+    {
+        _running = false;
+        _timer?.Dispose();
+        return ValueTask.CompletedTask;
+    }
+
+    private sealed record Row(DateTime occurred_at, int points, string reason, long? build_id, string? uniq_key);
+}

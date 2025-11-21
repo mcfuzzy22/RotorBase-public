@@ -1,0 +1,213 @@
+@rendermode InteractiveServer
+@using RotorBase.Components.Layout
+@inject HttpClient Http
+@inject UserSession Session
+@inject NavigationManager Nav
+@implements IDisposable
+
+<aside class="hidden w-64 shrink-0 md:block">
+  <div class="sticky top-0 h-[calc(100dvh-0px)] p-3 space-y-5">
+    <!-- Welcome -->
+    <section class="card bg-surface/80 p-4 shadow-sm ring-1 ring-border/60">
+      <div class="flex items-start justify-between gap-3">
+        <div>
+          <p class="text-sm font-semibold text-foreground">Welcome</p>
+          <p class="text-xs text-foreground/60">Curate builds, kits, and parts.</p>
+        </div>
+        @if (Session.IsSignedIn)
+        {
+          <span class="rounded-full bg-primary/10 px-2.5 py-0.5 text-xs font-medium text-primary">
+            @(!string.IsNullOrWhiteSpace(Session.DisplayName) ? Session.DisplayName : "Member")
+          </span>
+        }
+        else
+        {
+          <span class="rounded-full bg-accent/10 px-2.5 py-0.5 text-xs font-medium text-accent">Guest</span>
+        }
+      </div>
+    </section>
+
+    <!-- Primary nav -->
+    <nav class="card p-2 shadow-sm ring-1 ring-border/60" aria-label="Primary">
+      <ul class="space-y-1">
+        <li><NavLink href="/" Match="NavLinkMatch.All" class="rb-nav group" ActiveClass="active">@IconHome() <span>Home</span></NavLink></li>
+        <li><NavLink href="/shop" Match="NavLinkMatch.Prefix" class="rb-nav group" ActiveClass="active">@IconBag() <span>Shop</span></NavLink></li>
+        <li><NavLink href="/bundles" Match="NavLinkMatch.Prefix" class="rb-nav group" ActiveClass="active">@IconCollection() <span>Bundles</span></NavLink></li>
+        <li><NavLink href="/builder" Match="NavLinkMatch.Prefix" class="rb-nav group" ActiveClass="active">@IconWrench() <span>Builder</span></NavLink></li>
+        <li><NavLink href="/builds" Match="NavLinkMatch.Prefix" class="rb-nav group" ActiveClass="active">@IconChart() <span>Builds</span></NavLink></li>
+        <li><NavLink href="/builds/gallery" Match="NavLinkMatch.Prefix" class="rb-nav group" ActiveClass="active">@IconUsers() <span>Community</span></NavLink></li>
+
+        @if (Session.IsSignedIn)
+        {
+          <li class="mt-3 border-t border-border/60 pt-2">
+            <NavLink href="/account/plan" Match="NavLinkMatch.Prefix" class="rb-nav group" ActiveClass="active">
+              @IconBadge() <span>My Plan</span>
+            </NavLink>
+          </li>
+        }
+      </ul>
+    </nav>
+
+    <!-- Admin (auto-shows if you're admin; set HideAdmin=true to suppress) -->
+    @if (!HideAdmin && Session.IsAdmin)
+    {
+      <nav class="card p-2 shadow-sm ring-1 ring-border/60" aria-label="Admin">
+        <div class="px-3 pb-2 text-xs font-semibold uppercase tracking-wide text-foreground/60">Admin</div>
+        <ul class="space-y-1">
+          <li><NavLink href="/admin/users"           class="rb-nav group" ActiveClass="active">@IconShield()     <span>Admin</span></NavLink></li>
+          <li><NavLink href="/admin/plans"           class="rb-nav group" ActiveClass="active">@IconCog()        <span>Plan Limits</span></NavLink></li>
+          <li><NavLink href="/admin/categories"      class="rb-nav group" ActiveClass="active">@IconGrid()       <span>Categories</span></NavLink></li>
+          <li><NavLink href="/admin/engine-families" class="rb-nav group" ActiveClass="active">@IconGauge()      <span>Engine Families</span></NavLink></li>
+          <li><NavLink href="/admin/engine-attrs"    class="rb-nav group" ActiveClass="active">@IconChecklist()  <span>Engine Attributes</span></NavLink></li>
+          <li><NavLink href="/admin/sockets"         class="rb-nav group" ActiveClass="active">@IconSockets()    <span>Sockets Matrix</span></NavLink></li>
+          <li><NavLink href="/admin/trees"           class="rb-nav group" ActiveClass="active">@IconTree()       <span>Category Trees</span></NavLink></li>
+          <li><NavLink href="/admin/parts"           class="rb-nav group" ActiveClass="active">@IconCube()       <span>Parts</span></NavLink></li>
+          <li><NavLink href="/admin/kits"            class="rb-nav group" ActiveClass="active">@IconLayers()     <span>Kits</span></NavLink></li>
+          <li><NavLink href="/admin/clicks"          class="rb-nav group" ActiveClass="active">@IconCursor()     <span>Click Attribution</span></NavLink></li>
+          <li><NavLink href="/admin/ingest"          class="rb-nav group" ActiveClass="active">@IconPlusCircle() <span>Ingest Part</span></NavLink></li>
+        </ul>
+      </nav>
+    }
+
+    <!-- Account -->
+    <section class="card p-4 shadow-sm ring-1 ring-border/60">
+      <div class="mb-2 flex items-center justify-between text-xs font-semibold uppercase tracking-wide text-foreground/60">
+        <span>Account</span>
+        @if (!_openAuth && !Session.IsSignedIn)
+        {
+          <span class="rounded-full bg-primary/10 px-2 py-0.5 text-primary">Sign in</span>
+        }
+      </div>
+
+      @if (!Session.IsSignedIn)
+      {
+        <div class="flex gap-2">
+          <button class="btn btn-primary h-8 px-3" @onclick="OpenAuth">Sign in</button>
+          <NavLink href="/account/plan" class="btn btn-ghost h-8 px-3">Plans</NavLink>
+        </div>
+      }
+      else
+      {
+        <div class="space-y-2">
+          <div class="flex items-start justify-between gap-3">
+            <div class="text-sm min-w-0">
+              <div class="font-medium truncate max-w-[9rem]">@Session.DisplayName</div>
+            </div>
+            <button class="btn btn-ghost h-8 px-3 shrink-0" @onclick="SignOutAsync">Sign out</button>
+          </div>
+          <div class="flex flex-col gap-1 text-xs font-medium text-primary">
+            <NavLink href="/account/plan" class="hover:underline">Manage plan</NavLink>
+            <NavLink href="/me/badges" class="hover:underline">Badges</NavLink>
+          </div>
+        </div>
+      }
+
+      @if (!Session.IsSignedIn)
+      {
+        <AuthControls OpenOnMount="@_openAuth" />
+      }
+    </section>
+  </div>
+</aside>
+
+@code {
+  [Parameter] public bool HideAdmin { get; set; } = false;
+
+  private bool _openAuth;
+
+  protected override async Task OnInitializedAsync()
+  {
+    Session.Changed += OnSessionChanged;
+    Nav.LocationChanged += OnLocationChanged;
+
+    try { await Session.HydrateAsync(); } catch { /* ignore */ }
+    ReadAuthQuery();
+  }
+
+  protected override void OnParametersSet() => ReadAuthQuery();
+
+  private void ReadAuthQuery(string? location = null)
+  {
+    try
+    {
+      var uri = new Uri(location ?? Nav.Uri);
+      var query = Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(uri.Query);
+      _openAuth = !Session.IsSignedIn && (query.TryGetValue("auth", out var v) && v.ToString() == "1");
+    }
+    catch
+    {
+      _openAuth = false;
+    }
+  }
+
+  private void OnLocationChanged(object? sender, Microsoft.AspNetCore.Components.Routing.LocationChangedEventArgs args)
+  {
+    ReadAuthQuery(args.Location);
+    _ = InvokeAsync(StateHasChanged);
+  }
+
+  private void OnSessionChanged()
+  {
+    ReadAuthQuery();
+    _ = InvokeAsync(StateHasChanged);
+  }
+
+  public void Dispose()
+  {
+    Session.Changed -= OnSessionChanged;
+    Nav.LocationChanged -= OnLocationChanged;
+  }
+
+  private void OpenAuth()
+  {
+    var uri = new Uri(Nav.Uri);
+    var baseUri = uri.GetLeftPart(UriPartial.Path);
+    var query = Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(uri.Query);
+    var map = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
+    foreach (var kvp in query)
+    {
+      map[kvp.Key] = kvp.Value.Count > 0 ? kvp.Value[^1] : null;
+    }
+
+    map["auth"] = "1";
+    var target = Microsoft.AspNetCore.WebUtilities.QueryHelpers.AddQueryString(baseUri, map);
+    Nav.NavigateTo(target, forceLoad: false);
+  }
+
+  private async Task SignOutAsync()
+  {
+    try
+    {
+      await Http.PostAsync("/api/auth/signout", null);
+    }
+    catch
+    {
+      // ignore failures; we'll still refresh the UI
+    }
+    finally
+    {
+      Nav.NavigateTo(Nav.Uri, forceLoad: true);
+    }
+  }
+
+  /* --- Icons (styled by .rb-nav/.rb-icon) --- */
+  RenderFragment Icon(string d) => @<svg class="rb-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="@d"/></svg>;
+  RenderFragment IconHome()       => Icon("M3 10.5 12 3l9 7.5 M5 9v11h14V9");
+  RenderFragment IconBag()        => @<svg class="rb-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 7h12l1 13H5L6 7Z"/><path d="M9 7a3 3 0 1 1 6 0"/></svg>;
+  RenderFragment IconCollection() => @<svg class="rb-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="4" rx="1"/><rect x="3" y="10" width="18" height="4" rx="1"/><rect x="3" y="16" width="18" height="4" rx="1"/></svg>;
+  RenderFragment IconWrench()     => Icon("M14.7 6.3A5 5 0 1 0 7.3 13.7l7 7 4-4-7-7Z M16 5l3 3");
+  RenderFragment IconChart()      => @<svg class="rb-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 3v18h18"/><rect x="6" y="12" width="3" height="6"/><rect x="11" y="9" width="3" height="9"/><rect x="16" y="6" width="3" height="12"/></svg>;
+  RenderFragment IconUsers()      => @<svg class="rb-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>;
+  RenderFragment IconBadge()      => @<svg class="rb-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="4" y="3" width="16" height="18" rx="2"/><path d="M7 7h10M7 11h10M7 15h6"/></svg>;
+  RenderFragment IconShield()     => Icon("M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z");
+  RenderFragment IconCog()        => @<svg class="rb-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06A1.7 1.7 0 0 0 15 19.4a1.7 1.7 0 0 0-1 .33l-.2.12a2 2 0 0 1-1.6 0l-.2-.12c.31.21.65.33 1 .33a1.7 1.7 0 0 0 1.87-.34l.06-.06A2 2 0 1 1 19.6 7l-.06.06c-.5.5-.6 1.26-.34 1.87.14.33.2.68.2 1.07s-.06.74-.2 1.07Z"/></svg>;
+  RenderFragment IconGrid()       => @<svg class="rb-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>;
+  RenderFragment IconGauge()      => Icon("M21 14a9 9 0 1 0-18 0 M12 7v5l3 3");
+  RenderFragment IconChecklist()  => Icon("m3 6 2 2 3-3 M11 7h10 m-18 6 2 2 3-3 M11 14h10 m-18 6 2 2 3-3 M11 21h10");
+  RenderFragment IconSockets()    => Icon("M9 2v5H6v6a6 6 0 0 0 6 6 6 6 0 0 0 6-6V7h-3V2h-2v5h-2V2H9Z");
+  RenderFragment IconTree()       => Icon("M12 2v20 M7 7h10 M5 12h6 M13 12h6 M9 17h6");
+  RenderFragment IconCube()       => Icon("M21 8l-9-5-9 5 9 5 9-5Z M3 8v8l9 5 9-5V8");
+  RenderFragment IconLayers()     => Icon("m12 3 9 5-9 5-9-5 9-5Z m-9 10 9 5 9-5");
+  RenderFragment IconCursor()     => Icon("m3 3 7 17 2-7 7-2L3 3Z");
+  RenderFragment IconPlusCircle() => @<svg class="rb-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M12 8v8M8 12h8"/></svg>;
+}

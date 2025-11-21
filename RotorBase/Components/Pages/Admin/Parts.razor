@@ -1,0 +1,1256 @@
+@page "/admin/parts"
+@rendermode InteractiveServer
+@using System.Net.Http.Json
+@using System.Text.Json
+@using System.Text.Json.Serialization
+@using System.Linq
+@using RotorBase
+@inject HttpClient Http
+@inject UserSession Session
+
+<h1 class="text-2xl font-semibold tracking-tight mb-4">Admin · Parts</h1>
+
+@if (!Session.IsSignedIn)
+{
+    <div role="alert" class="rounded-md border border-blue-200 bg-blue-50 text-blue-800 px-3 py-2 text-sm">Sign in to view admin tools.</div>
+}
+else if (!Session.IsAdmin)
+{
+    <div role="alert" class="rounded-md border border-amber-200 bg-amber-50 text-amber-800 px-3 py-2 text-sm">You need admin access to manage parts.</div>
+}
+else if (_loading)
+{
+    <div class="flex items-center gap-2 text-sm text-gray-600">
+        <div class="h-5 w-5 animate-spin rounded-full border-2 border-gray-300 border-t-transparent" aria-hidden="true"></div>
+        <span>Loading parts…</span>
+    </div>
+}
+else
+{
+    @if (!string.IsNullOrWhiteSpace(_globalError))
+    {
+        <div role="alert" class="mb-2 rounded-md border border-amber-200 bg-amber-50 text-amber-800 px-3 py-2 text-sm">@_globalError</div>
+    }
+    @if (!string.IsNullOrWhiteSpace(_globalInfo))
+    {
+        <div role="alert" class="mb-2 rounded-md border border-emerald-200 bg-emerald-50 text-emerald-800 px-3 py-2 text-sm">@_globalInfo</div>
+    }
+
+    <div class="grid grid-cols-1 md:grid-cols-12 gap-4">
+        <!-- LEFT COLUMN -->
+        <div class="md:col-span-4">
+            <div class="mb-3 rounded-xl border border-gray-200 bg-white shadow-sm">
+                <div class="p-4">
+                    <label class="text-sm font-medium text-gray-700">Search</label>
+                    <input class="mt-1 w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="SKU or name" value="@_search" @oninput="OnSearchChanged" />
+                </div>
+            </div>
+
+            <div class="max-h-[70vh] overflow-auto space-y-2">
+                @foreach (var summary in _parts)
+                {
+                    var active = _selectedPart?.Part?.PartId == summary.PartId;
+                    <button class="w-full text-left rounded-md border px-3 py-2 transition @(active ? "bg-indigo-600 text-white border-indigo-600" : "bg-white text-gray-900 hover:bg-gray-50 border-gray-200")" @onclick="() => LoadPartAsync(summary.PartId)">
+                        <div class="font-semibold">@summary.Sku</div>
+                        <div class="text-xs @(active?"text-indigo-100":"text-gray-500")">@summary.Name</div>
+                        <div class="text-xs @(active?"text-indigo-100/80":"text-gray-500")">@summary.BrandName · @summary.Status</div>
+                    </button>
+                }
+            </div>
+        </div>
+
+        <!-- RIGHT COLUMN -->
+        <div class="md:col-span-8">
+            @if (_selectedPart is null)
+            {
+                <div role="alert" class="rounded-md border border-gray-200 bg-gray-50 text-gray-700 px-3 py-2 text-sm">Select a part to edit.</div>
+            }
+            else
+            {
+                <div class="mb-3 flex items-center justify-between">
+                    <div>
+                        <h4 class="m-0 text-lg font-semibold text-gray-900">@_selectedPart.Part?.Name</h4>
+                        <div class="text-sm text-gray-500">SKU: @_selectedPart.Part?.Sku</div>
+                    </div>
+                    <div class="flex flex-col items-end gap-2">
+                        <span class="inline-flex items-center rounded-full bg-gray-100 text-gray-700 border border-gray-200 px-2 py-0.5 text-[11px]">@_selectedPart.Part?.Status</span>
+                        <div class="flex gap-2">
+                            <button class="inline-flex items-center rounded-md border border-gray-300 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50" @onclick="SoftDeleteAsync" disabled="_deleteBusy">Soft delete</button>
+                            <button class="inline-flex items-center rounded-md border border-red-300 bg-white px-3 py-1.5 text-xs font-medium text-red-700 hover:bg-red-50" @onclick="OpenDeleteModal">Delete…</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Tabs -->
+                <ul class="mb-3 flex flex-wrap gap-2">
+                    @foreach (var tab in _tabs)
+                    {
+                        var cls = tab == _activeTab
+                            ? "inline-flex items-center rounded-md bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white shadow-sm"
+                            : "inline-flex items-center rounded-md border border-gray-300 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50";
+                        <li>
+                            <button class="@cls" @onclick="() => SwitchTab(tab)">@tab</button>
+                        </li>
+                    }
+                </ul>
+
+                @if (_activeTab == "Details")
+                {
+                    @if (!string.IsNullOrWhiteSpace(_detailsError))
+                    {
+                        <div role="alert" class="mb-2 rounded-md border border-red-200 bg-red-50 text-red-800 px-3 py-2 text-sm">@_detailsError</div>
+                    }
+
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        <div class="flex flex-col">
+                            <label class="text-sm font-medium text-gray-700">SKU</label>
+                            <input class="mt-1 rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" @bind="_detailsForm.Sku" />
+                        </div>
+                        <div class="flex flex-col">
+                            <label class="text-sm font-medium text-gray-700">Name</label>
+                            <input class="mt-1 rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" @bind="_detailsForm.Name" />
+                        </div>
+                        <div class="flex flex-col">
+                            <label class="text-sm font-medium text-gray-700">Brand</label>
+                            <input class="mt-1 rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" @bind="_detailsForm.BrandName" />
+                        </div>
+                        <div class="flex flex-col">
+                            <label class="text-sm font-medium text-gray-700">Status</label>
+                            <select class="mt-1 rounded-md border border-gray-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" @bind="_detailsForm.Status">
+                                <option value="active">active</option>
+                                <option value="draft">draft</option>
+                                <option value="discontinued">discontinued</option>
+                            </select>
+                        </div>
+                        <div class="flex flex-col">
+                            <label class="text-sm font-medium text-gray-700">Unit of measure</label>
+                            <input class="mt-1 rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" @bind="_detailsForm.Uom" />
+                        </div>
+                        <div class="flex flex-col">
+                            <label class="text-sm font-medium text-gray-700">Pieces per unit</label>
+                            <input type="number" step="0.001" class="mt-1 rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" value="@_detailsForm.PiecesPerUnit" @oninput="OnDetailsPiecesChanged" />
+                        </div>
+                        <div class="flex flex-col">
+                            <label class="text-sm font-medium text-gray-700">Image URL</label>
+                            <input class="mt-1 rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" @bind="_detailsForm.ImageUrl" />
+                        </div>
+                        <div class="flex items-end">
+                            <label class="inline-flex select-none items-center gap-2 text-sm text-gray-700">
+                                <input class="h-4 w-4" type="checkbox" checked="@(_detailsForm.IsKit ?? false)" @onchange="OnDetailsKitChanged" />
+                                <span>Kit</span>
+                            </label>
+                        </div>
+                        <div class="md:col-span-2 flex flex-col">
+                            <label class="text-sm font-medium text-gray-700">Description</label>
+                            <textarea rows="3" class="mt-1 rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" @bind="_detailsForm.Description"></textarea>
+                        </div>
+                    </div>
+
+                    <div class="mt-4 rounded-xl border border-gray-200 bg-white p-4">
+                        <div class="flex items-center justify-between">
+                            <h3 class="text-sm font-semibold text-gray-800">3D Asset</h3>
+                            @if (!string.IsNullOrWhiteSpace(_selectedPart?.Part?.GltfUri))
+                            {
+                                <span class="text-xs text-gray-500">Current: @_selectedPart!.Part!.GltfUri</span>
+                            }
+                        </div>
+                        @if (!string.IsNullOrWhiteSpace(_uriError))
+                        {
+                            <div role="alert" class="mt-2 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">@_uriError</div>
+                        }
+                        <div class="mt-3 grid gap-3 md:grid-cols-2">
+                            <div class="flex flex-col">
+                                <label class="text-sm font-medium text-gray-700">GLB URI</label>
+                                <input class="mt-1 rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500" @bind="_uriForm.GltfUri" placeholder="/assets/glb/parts/example.glb" />
+                                <span class="mt-1 text-xs text-gray-500">Leave blank to clear the asset.</span>
+                            </div>
+                            <div class="flex flex-col">
+                                <label class="text-sm font-medium text-gray-700">Attach Node</label>
+                                <input class="mt-1 rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500" @bind="_uriForm.GltfAttachNode" placeholder="Attach_Main" />
+                                <span class="mt-1 text-xs text-gray-500">Defaults to Attach_Main when omitted.</span>
+                            </div>
+                        </div>
+                        <div class="mt-3 text-right">
+                            <button class="inline-flex items-center rounded-md bg-emerald-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-emerald-700 focus:outline-none focus:ring-2 focus:ring-emerald-500 disabled:opacity-60"
+                                    @onclick="SavePartUriAsync" disabled="@_uriSaving">
+                                @(_uriSaving ? "Saving..." : "Save 3D Asset")
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="mt-3 text-right">
+                        <button class="inline-flex items-center rounded-md bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500" @onclick="SaveDetailsAsync">Save changes</button>
+                    </div>
+                }
+                else if (_activeTab == "Categories")
+                {
+                    @if (!string.IsNullOrWhiteSpace(_categoryError))
+                    {
+                        <div role="alert" class="mb-2 rounded-md border border-red-200 bg-red-50 text-red-800 px-3 py-2 text-sm">@_categoryError</div>
+                    }
+
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        <div>
+                            <h6 class="mb-2 text-sm font-semibold text-gray-800">Current categories</h6>
+                            <ul class="space-y-2">
+                                @foreach (var cat in _selectedPart.Categories)
+                                {
+                                    <li class="flex items-center justify-between rounded-md border border-gray-200 bg-white p-3">
+                                        <div>
+                                            <div class="font-semibold">@cat.Name</div>
+                                            <div class="text-xs text-gray-500">@cat.Slug</div>
+                                        </div>
+                                        <div class="flex items-center gap-2">
+                                            @if (cat.IsPrimary)
+                                            {
+                                                <span class="inline-flex items-center rounded-full bg-emerald-100 text-emerald-700 border border-emerald-200 px-2 py-0.5 text-[11px]">Primary</span>
+                                            }
+                                            else
+                                            {
+                                                <button class="inline-flex items-center rounded-md border border-indigo-300 bg-indigo-50 px-2.5 py-1 text-xs font-medium text-indigo-700 hover:bg-indigo-100" @onclick="() => MakePrimaryAsync(cat.CategoryId)">Make primary</button>
+                                            }
+                                            <button class="inline-flex items-center rounded-md border border-red-300 bg-white px-2.5 py-1 text-xs font-medium text-red-700 hover:bg-red-50" @onclick="() => RemoveCategoryAsync(cat.CategoryId)">Remove</button>
+                                        </div>
+                                    </li>
+                                }
+                            </ul>
+                        </div>
+                        <div>
+                            <h6 class="mb-2 text-sm font-semibold text-gray-800">Add category</h6>
+                            <input class="mb-2 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="Search" value="@_categorySearch" @oninput="SearchCategoriesAsync" />
+                            <div class="max-h-[260px] overflow-auto space-y-2">
+                                @foreach (var leaf in _leafCategories)
+                                {
+                                    <button class="w-full text-left rounded-md border border-gray-200 bg-white px-3 py-2 hover:bg-gray-50" @onclick="() => AddCategoryAsync(leaf.CategoryId, !_selectedPart.Categories.Any())">
+                                        <div class="font-semibold">@leaf.Name</div>
+                                        <div class="text-xs text-gray-500">@leaf.Slug</div>
+                                    </button>
+                                }
+                            </div>
+                        </div>
+                    </div>
+                }
+                else if (_activeTab == "Fitment")
+                {
+                    @if (!string.IsNullOrWhiteSpace(_fitmentError))
+                    {
+                        <div role="alert" class="mb-2 rounded-md border border-red-200 bg-red-50 text-red-800 px-3 py-2 text-sm">@_fitmentError</div>
+                    }
+
+                    <div class="mb-3 grid grid-cols-1 md:grid-cols-12 gap-2 items-end">
+                        <div class="md:col-span-5 flex flex-col">
+                            <label class="text-sm font-medium text-gray-700">Engine code</label>
+                            <input class="mt-1 rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" @bind="_fitmentForm.EngineCode" />
+                        </div>
+                        <div class="md:col-span-2 flex flex-col">
+                            <label class="text-sm font-medium text-gray-700">Start</label>
+                            <input type="number" class="mt-1 rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" value="@_fitmentForm.YearsStart" @oninput="OnFitmentStartChanged" />
+                        </div>
+                        <div class="md:col-span-2 flex flex-col">
+                            <label class="text-sm font-medium text-gray-700">End</label>
+                            <input type="number" class="mt-1 rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" value="@_fitmentForm.YearsEnd" @oninput="OnFitmentEndChanged" />
+                        </div>
+                        <div class="md:col-span-2 flex flex-col">
+                            <label class="text-sm font-medium text-gray-700">Notes</label>
+                            <input class="mt-1 rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" @bind="_fitmentForm.Notes" />
+                        </div>
+                        <div class="md:col-span-1 text-right">
+                            <button class="mt-4 inline-flex items-center rounded-md bg-indigo-600 px-3 py-2 text-sm font-semibold text-white shadow-sm hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500" @onclick="AddFitmentAsync">Add</button>
+                        </div>
+                    </div>
+
+                    <div class="overflow-auto rounded-lg border border-gray-200">
+                        <table class="min-w-full text-sm">
+                            <thead class="bg-gray-50">
+                                <tr>
+                                    <th class="px-3 py-2 text-left font-semibold text-gray-700">Engine</th>
+                                    <th class="px-3 py-2 text-left font-semibold text-gray-700">Years</th>
+                                    <th class="px-3 py-2 text-left font-semibold text-gray-700">Notes</th>
+                                    <th class="px-3 py-2 text-right font-semibold text-gray-700"></th>
+                                </tr>
+                            </thead>
+                            <tbody class="divide-y divide-gray-100">
+                                @foreach (var row in _selectedPart.Fitment)
+                                {
+                                    var years = (row.YearsStart.HasValue || row.YearsEnd.HasValue)
+                                        ? $"{row.YearsStart?.ToString() ?? string.Empty}{(row.YearsEnd.HasValue ? $" - {row.YearsEnd}" : string.Empty)}"
+                                        : string.Empty;
+                                    <tr>
+                                        <td class="px-3 py-2">@row.Code</td>
+                                        <td class="px-3 py-2">@years</td>
+                                        <td class="px-3 py-2">@row.Notes</td>
+                                        <td class="px-3 py-2 text-right">
+                                            <button class="inline-flex items-center rounded-md border border-red-300 bg-white px-2.5 py-1 text-xs font-medium text-red-700 hover:bg-red-50" @onclick="() => DeleteFitmentAsync(row.PartFitmentId)">Delete</button>
+                                        </td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                }
+                else if (_activeTab == "Offerings")
+                {
+                    @if (!string.IsNullOrWhiteSpace(_offeringError))
+                    {
+                        <div role="alert" class="mb-2 rounded-md border border-red-200 bg-red-50 text-red-800 px-3 py-2 text-sm">@_offeringError</div>
+                    }
+
+                    <div class="mb-3 grid grid-cols-1 md:grid-cols-12 gap-2 items-end">
+                        <div class="md:col-span-3 flex flex-col">
+                            <label class="text-sm font-medium text-gray-700">Vendor</label>
+                            <input class="mt-1 rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" @bind="_offeringForm.VendorName" />
+                        </div>
+                        <div class="md:col-span-2 flex flex-col">
+                            <label class="text-sm font-medium text-gray-700">Price</label>
+                            <input type="number" step="0.01" class="mt-1 rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" value="@_offeringForm.Price" @oninput="OnOfferingPriceChanged" />
+                        </div>
+                        <div class="md:col-span-2 flex flex-col">
+                            <label class="text-sm font-medium text-gray-700">Currency</label>
+                            <input class="mt-1 rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" @bind="_offeringForm.Currency" />
+                        </div>
+                        <div class="md:col-span-3 flex flex-col">
+                            <label class="text-sm font-medium text-gray-700">Availability</label>
+                            <select class="mt-1 rounded-md border border-gray-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" @bind="_offeringForm.Availability">
+                                <option value="in_stock">in_stock</option>
+                                <option value="backorder">backorder</option>
+                                <option value="discontinued">discontinued</option>
+                                <option value="unknown">unknown</option>
+                            </select>
+                        </div>
+                        <div class="md:col-span-6 flex flex-col">
+                            <label class="text-sm font-medium text-gray-700">Product URL</label>
+                            <input class="mt-1 rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" @bind="_offeringForm.Url" />
+                        </div>
+                        <div class="md:col-span-6 flex flex-col">
+                            <label class="text-sm font-medium text-gray-700">Affiliate URL</label>
+                            <input class="mt-1 rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" @bind="_offeringForm.AffiliateUrl" />
+                        </div>
+                        <div class="md:col-span-12 text-right">
+                            <button class="inline-flex items-center rounded-md bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500" @onclick="AddOfferingAsync">Add offering</button>
+                        </div>
+                    </div>
+
+                    <div class="overflow-auto rounded-lg border border-gray-200">
+                        <table class="min-w-full text-sm">
+                            <thead class="bg-gray-50">
+                                <tr>
+                                    <th class="px-3 py-2 text-left font-semibold text-gray-700">Vendor</th>
+                                    <th class="px-3 py-2 text-left font-semibold text-gray-700">Price</th>
+                                    <th class="px-3 py-2 text-left font-semibold text-gray-700">Availability</th>
+                                    <th class="px-3 py-2 text-left font-semibold text-gray-700">URL</th>
+                                    <th class="px-3 py-2 text-right font-semibold text-gray-700"></th>
+                                </tr>
+                            </thead>
+                            <tbody class="divide-y divide-gray-100">
+                                @foreach (var row in _selectedPart.Offerings)
+                                {
+                                    <tr>
+                                        <td class="px-3 py-2">@row.Vendor</td>
+                                        <td class="px-3 py-2">@(row.Price?.ToString("C") ?? "-")</td>
+                                        <td class="px-3 py-2">@row.Availability</td>
+                                        <td class="px-3 py-2">
+                                            @if (!string.IsNullOrWhiteSpace(row.Url))
+                                            {
+                                                <a class="text-indigo-600 hover:underline" href="@row.Url" target="_blank">@row.Url</a>
+                                            }
+                                        </td>
+                                        <td class="px-3 py-2 text-right">
+                                            <button class="inline-flex items-center rounded-md border border-red-300 bg-white px-2.5 py-1 text-xs font-medium text-red-700 hover:bg-red-50" @onclick="() => DeleteOfferingAsync(row.OfferingId)">Delete</button>
+                                        </td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                }
+                else if (_activeTab == "Components")
+                {
+                    @if (!string.IsNullOrWhiteSpace(_componentError))
+                    {
+                        <div role="alert" class="mb-2 rounded-md border border-red-200 bg-red-50 text-red-800 px-3 py-2 text-sm">@_componentError</div>
+                    }
+
+                    @if (!(_selectedPart.Part?.IsKit ?? false))
+                    {
+                        <div role="alert" class="rounded-md border border-blue-200 bg-blue-50 text-blue-800 px-3 py-2 text-sm">Enable the kit option in details to manage components.</div>
+                    }
+                    else
+                    {
+                        <div class="mb-3 grid grid-cols-1 md:grid-cols-12 gap-2 items-end">
+                            <div class="md:col-span-6 flex flex-col">
+                                <label class="text-sm font-medium text-gray-700">Child SKU</label>
+                                <input class="mt-1 rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" @bind="_componentForm.ChildSku" />
+                            </div>
+                            <div class="md:col-span-3 flex flex-col">
+                                <label class="text-sm font-medium text-gray-700">Quantity</label>
+                                <input type="number" step="0.001" class="mt-1 rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" value="@_componentForm.QtyPerParent" @oninput="OnComponentQtyChanged" />
+                            </div>
+                            <div class="md:col-span-3 text-right">
+                                <button class="mt-4 inline-flex items-center rounded-md bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500" @onclick="AddComponentAsync">Add component</button>
+                            </div>
+                        </div>
+
+                        <div class="overflow-auto rounded-lg border border-gray-200">
+                            <table class="min-w-full text-sm">
+                                <thead class="bg-gray-50">
+                                    <tr>
+                                        <th class="px-3 py-2 text-left font-semibold text-gray-700">SKU</th>
+                                        <th class="px-3 py-2 text-left font-semibold text-gray-700">Name</th>
+                                        <th class="px-3 py-2 text-left font-semibold text-gray-700">Qty</th>
+                                        <th class="px-3 py-2 text-right font-semibold text-gray-700"></th>
+                                    </tr>
+                                </thead>
+                                <tbody class="divide-y divide-gray-100">
+                                    @foreach (var row in _selectedPart.Components)
+                                    {
+                                        <tr>
+                                            <td class="px-3 py-2">@row.Sku</td>
+                                            <td class="px-3 py-2">@row.Name</td>
+                                            <td class="px-3 py-2">@row.QtyPerParent</td>
+                                            <td class="px-3 py-2 text-right">
+                                                <button class="inline-flex items-center rounded-md border border-red-300 bg-white px-2.5 py-1 text-xs font-medium text-red-700 hover:bg-red-50" @onclick="() => DeleteComponentAsync(row.ChildPartId)">Delete</button>
+                                            </td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+                    }
+                }
+            }
+        </div>
+    </div>
+}
+
+@if (_showDeleteModal)
+{
+    <div class="fixed inset-0 z-40 bg-black/50"></div>
+    <div class="fixed inset-0 z-50 flex items-center justify-center p-4">
+        <div class="w-full max-w-md rounded-xl border border-gray-200 bg-white shadow-xl">
+            <div class="flex items-center justify-between border-b border-gray-200 px-4 py-3">
+                <h5 class="text-sm font-semibold">Delete part</h5>
+                <button type="button" class="inline-flex h-8 w-8 items-center justify-center rounded-md border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 disabled:opacity-50" aria-label="Close" @onclick="CloseDeleteModal" disabled="@_deleteBusy">✕</button>
+            </div>
+            <div class="px-4 py-3">
+                @if (!string.IsNullOrWhiteSpace(_deleteError))
+                {
+                    <div role="alert" class="mb-2 rounded-md border border-red-200 bg-red-50 text-red-800 px-3 py-2 text-sm">@_deleteError</div>
+                }
+                else if (_deleteProbe is null)
+                {
+                    <div class="flex items-center gap-2 text-sm text-gray-600">
+                        <div class="h-5 w-5 animate-spin rounded-full border-2 border-gray-300 border-t-transparent" aria-hidden="true"></div>
+                        <span>Checking dependencies…</span>
+                    </div>
+                }
+                else
+                {
+                    <p class="text-sm text-gray-700">This action cannot be undone.</p>
+                    <ul class="mb-3 list-disc pl-5 text-xs text-gray-600">
+                        <li>In builds: <strong>@_deleteProbe.Blockers.InBuilds</strong></li>
+                        <li>Used as child in kits: <strong>@_deleteProbe.Blockers.UsedAsChildInKits</strong></li>
+                        @if (_deleteProbe.Info.IsKit)
+                        {
+                            <li>Kit components: @_deleteProbe.Info.BomChildren</li>
+                        }
+                    </ul>
+                    @if (!_deleteProbe.Deletable)
+                    {
+                        <div role="alert" class="rounded-md border border-amber-200 bg-amber-50 text-amber-800 px-3 py-2 text-sm">Hard delete is blocked while this part is referenced. Use soft delete or remove those references first.</div>
+                    }
+                }
+            </div>
+            <div class="flex items-center justify-end gap-2 border-t border-gray-200 px-4 py-3">
+                <button class="inline-flex items-center rounded-md border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50" @onclick="CloseDeleteModal" disabled="@_deleteBusy">Cancel</button>
+                <button class="inline-flex items-center rounded-md border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50" @onclick="SoftDeleteAsync" disabled="@(_deleteBusy || _selectedPart is null)">Soft delete</button>
+                <button class="inline-flex items-center rounded-md bg-red-600 px-3 py-2 text-sm font-semibold text-white shadow-sm hover:bg-red-700 disabled:opacity-50" @onclick="HardDeleteAsync" disabled="@(_deleteBusy || _deleteProbe is null || !_deleteProbe.Deletable)">Hard delete</button>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    // C# code-behind unchanged from your original; markup-only Tailwind conversion
+    private readonly string[] _tabs = new[] { "Details", "Categories", "Fitment", "Offerings", "Components" };
+
+    private bool _loading = true;
+    private string _search = string.Empty;
+    private string? _globalError;
+
+    private List<AdminPartSummary> _parts = new();
+    private PartDetailResponse? _selectedPart;
+
+    private string _activeTab = "Details";
+
+    private AdminPartUpdateRequest _detailsForm = new();
+    private PartUriForm _uriForm = new();
+    private string? _detailsError;
+    private string? _uriError;
+    private string? _globalInfo;
+    private bool _uriSaving;
+
+    private List<LeafCategoryRow> _leafCategories = new();
+    private string _categorySearch = string.Empty;
+    private string? _categoryError;
+
+    private FitmentForm _fitmentForm = new();
+    private string? _fitmentError;
+
+    private OfferingForm _offeringForm = new();
+    private string? _offeringError;
+
+    private ComponentForm _componentForm = new();
+    private string? _componentError;
+    private bool _showDeleteModal;
+    private bool _deleteBusy;
+    private DeleteProbe? _deleteProbe;
+    private string? _deleteError;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await Session.HydrateAsync();
+        if (!Session.IsAdmin)
+        {
+            _loading = false;
+            return;
+        }
+
+        await LoadPartsAsync();
+        _loading = false;
+    }
+
+    private async Task LoadPartsAsync()
+    {
+        try
+        {
+            var url = string.IsNullOrWhiteSpace(_search)
+                ? "/api/admin/parts"
+                : $"/api/admin/parts?q={Uri.EscapeDataString(_search)}";
+            _parts = await Http.GetFromJsonAsync<List<AdminPartSummary>>(url) ?? new();
+        }
+        catch (Exception ex)
+        {
+            _globalError = ex.Message;
+        }
+        StateHasChanged();
+    }
+
+    private async Task LoadPartAsync(long partId)
+    {
+        try
+        {
+            _globalInfo = null;
+            _deleteError = null;
+            _showDeleteModal = false;
+            _deleteProbe = null;
+
+            _selectedPart = await Http.GetFromJsonAsync<PartDetailResponse>($"/api/admin/parts/{partId}");
+            if (_selectedPart?.Part is null)
+            {
+                _globalError = "Part not found.";
+                return;
+            }
+
+        _detailsForm = new AdminPartUpdateRequest
+        {
+            Sku = _selectedPart.Part.Sku,
+            Name = _selectedPart.Part.Name,
+            BrandName = _selectedPart.Part.BrandName,
+            Status = _selectedPart.Part.Status,
+            IsKit = _selectedPart.Part.IsKit,
+            Uom = _selectedPart.Part.Uom,
+            PiecesPerUnit = _selectedPart.Part.PiecesPerUnit,
+            Description = _selectedPart.Part.Description,
+            ImageUrl = _selectedPart.Part.ImageUrl
+        };
+        _uriForm = new PartUriForm
+        {
+            PartId = _selectedPart.Part.PartId,
+            GltfUri = _selectedPart.Part.GltfUri ?? string.Empty,
+            GltfAttachNode = _selectedPart.Part.GltfAttachNode ?? string.Empty
+        };
+        _uriError = null;
+        _uriSaving = false;
+
+        await LoadLeafCategoriesAsync();
+    }
+        catch (Exception ex)
+        {
+            _globalError = ex.Message;
+        }
+
+        StateHasChanged();
+    }
+
+    private async Task RefreshCurrentPartAsync()
+    {
+        if (_selectedPart?.Part is null) return;
+        await LoadPartAsync(_selectedPart.Part.PartId);
+        await LoadPartsAsync();
+    }
+
+    private void SwitchTab(string tab)
+    {
+        _activeTab = tab;
+        StateHasChanged();
+    }
+
+    private async Task OnSearchChanged(ChangeEventArgs e)
+    {
+        _search = e.Value?.ToString() ?? string.Empty;
+        await LoadPartsAsync();
+    }
+
+    private async Task SaveDetailsAsync()
+    {
+        if (_selectedPart?.Part is null) return;
+
+        try
+        {
+            var response = await Http.PatchAsJsonAsync($"/api/admin/parts/{_selectedPart.Part.PartId}", _detailsForm);
+            if (!response.IsSuccessStatusCode)
+            {
+                _detailsError = await response.Content.ReadAsStringAsync();
+                return;
+            }
+
+            _detailsError = null;
+            await RefreshCurrentPartAsync();
+        }
+        catch (Exception ex)
+        {
+            _detailsError = ex.Message;
+        }
+    }
+
+    private async Task SavePartUriAsync()
+    {
+        if (_selectedPart?.Part is null) return;
+
+        _uriSaving = true;
+        _uriError = null;
+
+        var payload = new UpdatePartUriRequest
+        {
+            PartId = _selectedPart.Part.PartId,
+            GltfUri = string.IsNullOrWhiteSpace(_uriForm.GltfUri) ? null : _uriForm.GltfUri.Trim(),
+            GltfAttachNode = string.IsNullOrWhiteSpace(_uriForm.GltfAttachNode) ? null : _uriForm.GltfAttachNode.Trim()
+        };
+
+        try
+        {
+            var response = await Http.PutAsJsonAsync($"/api/admin/parts/{payload.PartId}/uri", payload);
+            if (!response.IsSuccessStatusCode)
+            {
+                _uriError = await response.Content.ReadAsStringAsync();
+                return;
+            }
+
+            _globalInfo = "3D asset updated.";
+            _selectedPart.Part.GltfUri = payload.GltfUri;
+            _selectedPart.Part.GltfAttachNode = payload.GltfAttachNode;
+            _uriForm.GltfUri = payload.GltfUri ?? string.Empty;
+            _uriForm.GltfAttachNode = payload.GltfAttachNode ?? string.Empty;
+        }
+        catch (Exception ex)
+        {
+            _uriError = ex.Message;
+        }
+        finally
+        {
+            _uriSaving = false;
+            StateHasChanged();
+        }
+    }
+
+    private void OnDetailsPiecesChanged(ChangeEventArgs e)
+    {
+        if (decimal.TryParse(e.Value?.ToString(), out var value))
+        {
+            _detailsForm.PiecesPerUnit = value;
+        }
+        else
+        {
+            _detailsForm.PiecesPerUnit = null;
+        }
+    }
+
+    private void OnDetailsKitChanged(ChangeEventArgs e)
+    {
+        _detailsForm.IsKit = e.Value switch
+        {
+            bool b => b,
+            string s => string.Equals(s, "true", StringComparison.OrdinalIgnoreCase) || string.Equals(s, "on", StringComparison.OrdinalIgnoreCase),
+            _ => _detailsForm.IsKit ?? false
+        };
+    }
+
+    private async Task LoadLeafCategoriesAsync()
+    {
+        var url = string.IsNullOrWhiteSpace(_categorySearch)
+            ? "/api/admin/categories/leaf"
+            : $"/api/admin/categories/leaf?q={Uri.EscapeDataString(_categorySearch)}";
+        try
+        {
+            _leafCategories = await Http.GetFromJsonAsync<List<LeafCategoryRow>>(url) ?? new();
+        }
+        catch
+        {
+            _leafCategories = new();
+        }
+    }
+
+    private async Task SearchCategoriesAsync(ChangeEventArgs e)
+    {
+        _categorySearch = e.Value?.ToString() ?? string.Empty;
+        await LoadLeafCategoriesAsync();
+        StateHasChanged();
+    }
+
+    private async Task AddCategoryAsync(long categoryId, bool primary)
+    {
+        if (_selectedPart?.Part is null) return;
+
+        try
+        {
+            var payload = new AdminPartCategoryRequest
+            {
+                CategoryId = categoryId,
+                IsPrimary = primary
+            };
+            var response = await Http.PostAsJsonAsync($"/api/admin/parts/{_selectedPart.Part.PartId}/categories", payload);
+            if (!response.IsSuccessStatusCode)
+            {
+                _categoryError = await response.Content.ReadAsStringAsync();
+                return;
+            }
+            _categoryError = null;
+            await RefreshCurrentPartAsync();
+        }
+        catch (Exception ex)
+        {
+            _categoryError = ex.Message;
+        }
+    }
+
+    private async Task MakePrimaryAsync(long categoryId)
+    {
+        if (_selectedPart?.Categories is null) return;
+        await AddCategoryAsync(categoryId, true);
+        foreach (var cat in _selectedPart.Categories.Where(c => c.CategoryId != categoryId))
+        {
+            await Http.PostAsJsonAsync($"/api/admin/parts/{_selectedPart.Part!.PartId}/categories", new AdminPartCategoryRequest
+            {
+                CategoryId = cat.CategoryId,
+                IsPrimary = false
+            });
+        }
+        await RefreshCurrentPartAsync();
+    }
+
+    private async Task RemoveCategoryAsync(long categoryId)
+    {
+        if (_selectedPart?.Part is null) return;
+        try
+        {
+            var response = await Http.DeleteAsync($"/api/admin/parts/{_selectedPart.Part.PartId}/categories/{categoryId}");
+            if (!response.IsSuccessStatusCode)
+            {
+                _categoryError = await response.Content.ReadAsStringAsync();
+                return;
+            }
+            _categoryError = null;
+            await RefreshCurrentPartAsync();
+        }
+        catch (Exception ex)
+        {
+            _categoryError = ex.Message;
+        }
+    }
+
+    private async Task AddFitmentAsync()
+    {
+        if (_selectedPart?.Part is null) return;
+        if (string.IsNullOrWhiteSpace(_fitmentForm.EngineCode))
+        {
+            _fitmentError = "Enter an engine code.";
+            return;
+        }
+
+        try
+        {
+            var payload = new AdminPartFitmentRequest
+            {
+                EngineCode = _fitmentForm.EngineCode,
+                YearsStart = _fitmentForm.YearsStart,
+                YearsEnd = _fitmentForm.YearsEnd,
+                Notes = _fitmentForm.Notes
+            };
+            var response = await Http.PostAsJsonAsync($"/api/admin/parts/{_selectedPart.Part.PartId}/fitment", payload);
+            if (!response.IsSuccessStatusCode)
+            {
+                _fitmentError = await response.Content.ReadAsStringAsync();
+                return;
+            }
+
+            _fitmentError = null;
+            _fitmentForm = new FitmentForm();
+            await RefreshCurrentPartAsync();
+        }
+        catch (Exception ex)
+        {
+            _fitmentError = ex.Message;
+        }
+    }
+
+    private void OnFitmentStartChanged(ChangeEventArgs e)
+    {
+        if (short.TryParse(e.Value?.ToString(), out var value))
+        {
+            _fitmentForm.YearsStart = value;
+        }
+        else
+        {
+            _fitmentForm.YearsStart = null;
+        }
+    }
+
+    private void OnFitmentEndChanged(ChangeEventArgs e)
+    {
+        if (short.TryParse(e.Value?.ToString(), out var value))
+        {
+            _fitmentForm.YearsEnd = value;
+        }
+        else
+        {
+            _fitmentForm.YearsEnd = null;
+        }
+    }
+
+    private async Task DeleteFitmentAsync(long fitmentId)
+    {
+        if (_selectedPart?.Part is null) return;
+        try
+        {
+            var response = await Http.DeleteAsync($"/api/admin/parts/{_selectedPart.Part.PartId}/fitment/{fitmentId}");
+            if (!response.IsSuccessStatusCode)
+            {
+                _fitmentError = await response.Content.ReadAsStringAsync();
+                return;
+            }
+
+            _fitmentError = null;
+            await RefreshCurrentPartAsync();
+        }
+        catch (Exception ex)
+        {
+            _fitmentError = ex.Message;
+        }
+    }
+
+    private async Task AddOfferingAsync()
+    {
+        if (_selectedPart?.Part is null) return;
+        if (string.IsNullOrWhiteSpace(_offeringForm.VendorName))
+        {
+            _offeringError = "Enter a vendor.";
+            return;
+        }
+
+        if (_offeringForm.Price < 0)
+        {
+            _offeringError = "Enter a valid price.";
+            return;
+        }
+
+        try
+        {
+            var payload = new AdminPartOfferingRequest
+            {
+                VendorName = _offeringForm.VendorName,
+                Price = _offeringForm.Price,
+                Currency = _offeringForm.Currency,
+                Url = _offeringForm.Url,
+                AffiliateUrl = _offeringForm.AffiliateUrl,
+                Availability = _offeringForm.Availability
+            };
+            var response = await Http.PostAsJsonAsync($"/api/admin/parts/{_selectedPart.Part.PartId}/offerings", payload);
+            if (!response.IsSuccessStatusCode)
+            {
+                _offeringError = await response.Content.ReadAsStringAsync();
+                return;
+            }
+
+            _offeringError = null;
+            _offeringForm = new OfferingForm();
+            await RefreshCurrentPartAsync();
+        }
+        catch (Exception ex)
+        {
+            _offeringError = ex.Message;
+        }
+    }
+
+    private void OnOfferingPriceChanged(ChangeEventArgs e)
+    {
+        if (decimal.TryParse(e.Value?.ToString(), out var value))
+        {
+            _offeringForm.Price = value;
+        }
+    }
+
+    private async Task DeleteOfferingAsync(long offeringId)
+    {
+        if (_selectedPart?.Part is null) return;
+        try
+        {
+            var response = await Http.DeleteAsync($"/api/admin/parts/{_selectedPart.Part.PartId}/offerings/{offeringId}");
+            if (!response.IsSuccessStatusCode)
+            {
+                _offeringError = await response.Content.ReadAsStringAsync();
+                return;
+            }
+
+            _offeringError = null;
+            await RefreshCurrentPartAsync();
+        }
+        catch (Exception ex)
+        {
+            _offeringError = ex.Message;
+        }
+    }
+
+    private async Task AddComponentAsync()
+    {
+        if (_selectedPart?.Part is null) return;
+        if (!_selectedPart.Part.IsKit)
+        {
+            _componentError = "Enable kit mode to manage components.";
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(_componentForm.ChildSku))
+        {
+            _componentError = "Enter child SKU.";
+            return;
+        }
+
+        if (_componentForm.QtyPerParent <= 0)
+        {
+            _componentError = "Quantity must be positive.";
+            return;
+        }
+
+        try
+        {
+            var payload = new AdminPartComponentRequest
+            {
+                ChildSku = _componentForm.ChildSku,
+                QtyPerParent = _componentForm.QtyPerParent
+            };
+            var response = await Http.PostAsJsonAsync($"/api/admin/parts/{_selectedPart.Part.PartId}/components", payload);
+            if (!response.IsSuccessStatusCode)
+            {
+                _componentError = await response.Content.ReadAsStringAsync();
+                return;
+            }
+
+            _componentError = null;
+            _componentForm = new ComponentForm();
+            await RefreshCurrentPartAsync();
+        }
+        catch (Exception ex)
+        {
+            _componentError = ex.Message;
+        }
+    }
+
+    private void OnComponentQtyChanged(ChangeEventArgs e)
+    {
+        if (decimal.TryParse(e.Value?.ToString(), out var value) && value > 0)
+        {
+            _componentForm.QtyPerParent = value;
+        }
+    }
+
+    private async Task DeleteComponentAsync(long childPartId)
+    {
+        if (_selectedPart?.Part is null) return;
+        try
+        {
+            var response = await Http.DeleteAsync($"/api/admin/parts/{_selectedPart.Part.PartId}/components/{childPartId}");
+            if (!response.IsSuccessStatusCode)
+            {
+                _componentError = await response.Content.ReadAsStringAsync();
+                return;
+            }
+
+            _componentError = null;
+            await RefreshCurrentPartAsync();
+        }
+        catch (Exception ex)
+        {
+            _componentError = ex.Message;
+        }
+    }
+
+    private void OpenDeleteModal()
+    {
+        if (_selectedPart?.Part is null) return;
+        _deleteError = null;
+        _deleteProbe = null;
+        _showDeleteModal = true;
+        _ = LoadDeleteProbeAsync(_selectedPart.Part.PartId);
+    }
+
+    private async Task LoadDeleteProbeAsync(long partId)
+    {
+        try
+        {
+            _deleteProbe = await Http.GetFromJsonAsync<DeleteProbe>($"/api/admin/parts/{partId}/can-delete");
+            _deleteError = null;
+        }
+        catch (Exception ex)
+        {
+            _deleteError = ex.Message;
+        }
+        StateHasChanged();
+    }
+
+    private async Task SoftDeleteAsync()
+    {
+        if (_selectedPart?.Part is null || _deleteBusy)
+            return;
+
+        _deleteBusy = true;
+        _globalError = null;
+        _deleteError = null;
+
+        try
+        {
+            var response = await Http.PostAsync($"/api/admin/parts/{_selectedPart.Part.PartId}/soft-delete", null);
+            if (!response.IsSuccessStatusCode)
+            {
+                var message = await ReadResponseMessageAsync(response, "Unable to mark part as discontinued.");
+                _globalError = message;
+                return;
+            }
+
+            _showDeleteModal = false;
+            _deleteProbe = null;
+            await RefreshCurrentPartAsync();
+            _globalInfo = "Part marked as discontinued.";
+        }
+        catch (Exception ex)
+        {
+            _globalError = ex.Message;
+        }
+        finally
+        {
+            _deleteBusy = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task HardDeleteAsync()
+    {
+        if (_selectedPart?.Part is null || _deleteBusy)
+            return;
+
+        _deleteBusy = true;
+        _deleteError = null;
+        _globalError = null;
+
+        try
+        {
+            var response = await Http.DeleteAsync($"/api/admin/parts/{_selectedPart.Part.PartId}");
+            if (!response.IsSuccessStatusCode)
+            {
+                var message = await ReadResponseMessageAsync(response, "Unable to delete part.");
+                _deleteError = message;
+                return;
+            }
+
+            var name = _selectedPart.Part.Name ?? _selectedPart.Part.Sku ?? "Part";
+            _globalInfo = $"Deleted {name}.";
+            _showDeleteModal = false;
+            _deleteProbe = null;
+            _selectedPart = null;
+            await LoadPartsAsync();
+        }
+        catch (Exception ex)
+        {
+            _deleteError = ex.Message;
+        }
+        finally
+        {
+            _deleteBusy = false;
+            StateHasChanged();
+        }
+    }
+
+    private void CloseDeleteModal()
+    {
+        _showDeleteModal = false;
+        _deleteError = null;
+        _deleteProbe = null;
+    }
+
+    private static async Task<string> ReadResponseMessageAsync(HttpResponseMessage response, string fallback)
+    {
+        try
+        {
+            var text = await response.Content.ReadAsStringAsync();
+            if (!string.IsNullOrWhiteSpace(text))
+            {
+                try
+                {
+                    using var document = JsonDocument.Parse(text);
+                    if (document.RootElement.TryGetProperty("message", out var messageProp) && messageProp.ValueKind == JsonValueKind.String)
+                        return messageProp.GetString()!;
+                    if (document.RootElement.TryGetProperty("error", out var errorProp) && errorProp.ValueKind == JsonValueKind.String)
+                        return errorProp.GetString()!;
+                }
+                catch (JsonException)
+                {
+                    // ignore malformed JSON
+                }
+
+                return text.Length > 200 ? text.Substring(0, 200) + "…" : text;
+            }
+        }
+        catch
+        {
+        }
+
+        return fallback;
+    }
+
+    private class DeleteProbe
+    {
+        [JsonPropertyName("deletable")] public bool Deletable { get; set; }
+        [JsonPropertyName("blockers")] public DeleteProbeBlockers Blockers { get; set; } = new();
+        [JsonPropertyName("info")] public DeleteProbeInfo Info { get; set; } = new();
+    }
+
+    private class DeleteProbeBlockers
+    {
+        [JsonPropertyName("in_builds")] public int InBuilds { get; set; }
+        [JsonPropertyName("used_as_child_in_kits")] public int UsedAsChildInKits { get; set; }
+    }
+
+    private class DeleteProbeInfo
+    {
+        [JsonPropertyName("is_kit")] public bool IsKit { get; set; }
+        [JsonPropertyName("bom_children")] public int BomChildren { get; set; }
+        [JsonPropertyName("categories")] public int Categories { get; set; }
+        [JsonPropertyName("fitment")] public int Fitment { get; set; }
+        [JsonPropertyName("offerings")] public int Offerings { get; set; }
+    }
+
+    private record AdminPartSummary
+    {
+        [JsonPropertyName("part_id")] public long PartId { get; set; }
+        [JsonPropertyName("sku")] public string? Sku { get; set; }
+        [JsonPropertyName("name")] public string Name { get; set; } = string.Empty;
+        [JsonPropertyName("status")] public string Status { get; set; } = string.Empty;
+        [JsonPropertyName("brand_name")] public string? BrandName { get; set; }
+    }
+
+    private class PartDetailResponse
+    {
+        [JsonPropertyName("part")] public PartRow? Part { get; set; }
+        [JsonPropertyName("categories")] public List<PartCategoryRow> Categories { get; set; } = new();
+        [JsonPropertyName("fitment")] public List<PartFitmentRow> Fitment { get; set; } = new();
+        [JsonPropertyName("offerings")] public List<PartOfferingRow> Offerings { get; set; } = new();
+        [JsonPropertyName("components")] public List<PartComponentRow> Components { get; set; } = new();
+    }
+
+    private record PartRow
+    {
+        [JsonPropertyName("part_id")] public long PartId { get; set; }
+        [JsonPropertyName("sku")] public string? Sku { get; set; }
+        [JsonPropertyName("name")] public string Name { get; set; } = string.Empty;
+        [JsonPropertyName("brand_name")] public string? BrandName { get; set; }
+        [JsonPropertyName("status")] public string Status { get; set; } = string.Empty;
+        [JsonPropertyName("is_kit")] public bool IsKit { get; set; }
+        [JsonPropertyName("uom")] public string? Uom { get; set; }
+        [JsonPropertyName("pieces_per_unit")] public decimal? PiecesPerUnit { get; set; }
+        [JsonPropertyName("gltf_uri")] public string? GltfUri { get; set; }
+        [JsonPropertyName("gltf_attach_node")] public string? GltfAttachNode { get; set; }
+        [JsonPropertyName("description")] public string? Description { get; set; }
+        [JsonPropertyName("image_url")] public string? ImageUrl { get; set; }
+    }
+
+    private record PartCategoryRow
+    {
+        [JsonPropertyName("category_id")] public long CategoryId { get; set; }
+        [JsonPropertyName("name")] public string Name { get; set; } = string.Empty;
+        [JsonPropertyName("slug")] public string Slug { get; set; } = string.Empty;
+        [JsonPropertyName("is_primary")] public bool IsPrimary { get; set; }
+    }
+
+    private record PartFitmentRow
+    {
+        [JsonPropertyName("part_fitment_id")] public long PartFitmentId { get; set; }
+        [JsonPropertyName("code")] public string Code { get; set; } = string.Empty;
+        [JsonPropertyName("years_start")] public short? YearsStart { get; set; }
+        [JsonPropertyName("years_end")] public short? YearsEnd { get; set; }
+        [JsonPropertyName("notes")] public string? Notes { get; set; }
+    }
+
+    private record PartOfferingRow
+    {
+        [JsonPropertyName("offering_id")] public long OfferingId { get; set; }
+        [JsonPropertyName("vendor")] public string Vendor { get; set; } = string.Empty;
+        [JsonPropertyName("price")] public decimal? Price { get; set; }
+        [JsonPropertyName("availability")] public string Availability { get; set; } = string.Empty;
+        [JsonPropertyName("url")] public string? Url { get; set; }
+    }
+
+    private record PartComponentRow
+    {
+        [JsonPropertyName("child_part_id")] public long ChildPartId { get; set; }
+        [JsonPropertyName("sku")] public string? Sku { get; set; }
+        [JsonPropertyName("name")] public string Name { get; set; } = string.Empty;
+        [JsonPropertyName("qty_per_parent")] public decimal QtyPerParent { get; set; }
+    }
+
+    private record LeafCategoryRow
+    {
+        [JsonPropertyName("category_id")] public long CategoryId { get; set; }
+        [JsonPropertyName("name")] public string Name { get; set; } = string.Empty;
+        [JsonPropertyName("slug")] public string Slug { get; set; } = string.Empty;
+    }
+
+    private class PartUriForm
+    {
+        public long PartId { get; set; }
+        public string? GltfUri { get; set; }
+        public string? GltfAttachNode { get; set; }
+    }
+
+    private class FitmentForm
+    {
+        public string EngineCode { get; set; } = string.Empty;
+        public short? YearsStart { get; set; }
+        public short? YearsEnd { get; set; }
+        public string? Notes { get; set; }
+    }
+
+    private class OfferingForm
+    {
+        public string VendorName { get; set; } = string.Empty;
+        public decimal Price { get; set; }
+        public string Currency { get; set; } = "USD";
+        public string? Url { get; set; }
+        public string? AffiliateUrl { get; set; }
+        public string? Availability { get; set; } = "in_stock";
+    }
+
+    private class ComponentForm
+    {
+        public string ChildSku { get; set; } = string.Empty;
+        public decimal QtyPerParent { get; set; } = 1m;
+    }
+}

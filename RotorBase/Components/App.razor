@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <base href="/" />
+    <script>
+        (function () {
+            try {
+                var theme = localStorage.getItem('theme') || 'system';
+                var prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+                var root = document.documentElement;
+                root.classList.remove('dark');
+                if (theme === 'dark' || (theme === 'system' && prefersDark)) {
+                    root.classList.add('dark');
+                }
+                var brand = localStorage.getItem('theme-brand');
+                if (brand) {
+                    root.setAttribute('data-theme', brand);
+                }
+            } catch (e) { }
+        })();
+    </script>
+    <script>
+        window.rb = window.rb || {};
+        window.rb.sessionId = () => {
+            try {
+                const key = 'rb.sid';
+                let value = localStorage.getItem(key);
+                if (!value) {
+                    const globalCrypto = window.crypto || window.msCrypto;
+                    if (globalCrypto && typeof globalCrypto.randomUUID === 'function') {
+                        value = globalCrypto.randomUUID();
+                    } else if (globalCrypto && typeof globalCrypto.getRandomValues === 'function') {
+                        value = ([1e7]+-1e3+-4e3+-8e3+-1e11).replace(/[018]/g, c =>
+                            (c ^ globalCrypto.getRandomValues(new Uint8Array(1))[0] & 15 >> c / 4).toString(16));
+                    } else {
+                        value = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+                    }
+                    localStorage.setItem(key, value);
+                }
+                return value;
+            } catch {
+                return 'anon';
+            }
+        };
+        window.rb.once = (key) => {
+            try {
+                const storageKey = `rb.once.${key}`;
+                if (localStorage.getItem(storageKey)) {
+                    return false;
+                }
+                localStorage.setItem(storageKey, '1');
+                return true;
+            } catch {
+                return false;
+            }
+        };
+        window.rb.clearOnce = (prefix) => {
+            try {
+                const p = `rb.once.${prefix || ''}`;
+                for (const key of Object.keys(localStorage)) {
+                    if (key.startsWith(p)) {
+                        localStorage.removeItem(key);
+                    }
+                }
+            } catch {
+                // no-op
+            }
+        };
+    </script>
+    <link rel="stylesheet" href="app.css" />
+    <link rel="stylesheet" href="RotorBase.styles.css" />
+    <link rel="stylesheet" href="css/app.tailwind.build.css" />
+    <link rel="icon" type="image/png" href="favicon.png" />
+    <HeadOutlet />
+</head>
+
+<body>
+    <Routes />
+    <script src="js/theme.js"></script>
+    <script>
+        window.downloadFile = (name, href) => {
+            const link = document.createElement('a');
+            link.href = href;
+            link.download = name;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        };
+    </script>
+    <script src="_framework/blazor.web.js"></script>
+</body>
+
+</html>

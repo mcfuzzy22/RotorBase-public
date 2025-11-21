@@ -1,0 +1,887 @@
+@page "/shop/parts/{Key}"
+@page "/part/{Key}"
+@rendermode InteractiveServer
+@using System.Linq
+@using System.Net
+@using System.Net.Http.Json
+@using System.Text.Json
+@using System.Text.Json.Serialization
+@inject HttpClient Http
+@inject NavigationManager Nav
+@inject CompareTrayService CompareTray
+@inject UserSession Session
+@inject ToastService Toast
+
+<PageTitle>@PageTitleText</PageTitle>
+
+<HeadContent>
+    @if (!string.IsNullOrEmpty(CanonicalUrl))
+    {
+        <link rel="canonical" href="@CanonicalUrl" />
+    }
+</HeadContent>
+
+@if (IsLoading)
+{
+    <div class="max-w-7xl mx-auto px-4 py-6">
+        <p class="text-sm text-gray-500 dark:text-gray-300">Loading…</p>
+    </div>
+}
+else if (!string.IsNullOrEmpty(ErrorMessage))
+{
+    <div class="max-w-7xl mx-auto px-4 py-6">
+        <div class="rounded-lg border border-red-200/60 bg-red-50 text-red-800 dark:bg-red-900/30 dark:text-red-200 px-3 py-2">
+            @ErrorMessage
+        </div>
+    </div>
+}
+else if (Data is null)
+{
+    <div class="max-w-7xl mx-auto px-4 py-6">
+        <div class="rounded-lg border border-amber-200/60 bg-amber-50 text-amber-900 dark:bg-amber-900/30 dark:text-amber-200 px-3 py-2">
+            Part not found.
+        </div>
+    </div>
+}
+else
+{
+    <div class="max-w-7xl mx-auto px-4 py-6 text-gray-900 dark:text-gray-100">
+        @if (!string.IsNullOrEmpty(SuccessMessage))
+        {
+            <div class="mb-4 flex items-start justify-between gap-4 rounded-lg border border-emerald-200/60 bg-emerald-50 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-200 px-3 py-2">
+                <div>@SuccessMessage</div>
+                <button class="text-sm opacity-70 hover:opacity-100" @onclick="DismissSuccess">×</button>
+            </div>
+        }
+
+        @if (!string.IsNullOrEmpty(InlineErrorMessage))
+        {
+            <div class="mb-4 flex items-start justify-between gap-4 rounded-lg border border-amber-200/60 bg-amber-50 text-amber-900 dark:bg-amber-900/30 dark:text-amber-200 px-3 py-2">
+                <div>@InlineErrorMessage</div>
+                <button class="text-sm opacity-70 hover:opacity-100" @onclick="(() => InlineErrorMessage = null)">×</button>
+            </div>
+        }
+
+        <div class="grid gap-6 lg:grid-cols-12">
+            <!-- Left: Details -->
+            <div class="lg:col-span-8 space-y-4">
+                <div class="rounded-xl border border-black/5 dark:border-white/10 bg-white dark:bg-[#0F1720] shadow-sm p-4">
+                    <div class="flex flex-col gap-4 md:flex-row">
+                        <div class="shrink-0 md:w-60 lg:w-72">
+                            <div class="relative overflow-hidden rounded-xl border border-black/10 dark:border-white/10 bg-gray-100 dark:bg-white/5">
+                                <img src="@PartImageSource"
+                                     alt="Image of @Data.part?.name"
+                                     decoding="async"
+                                     loading="lazy"
+                                     class="h-64 w-full object-cover"
+                                     onerror="this.onerror=null;this.src='@PlaceholderImageDataUri';" />
+                                @if (Data.part?.is_kit == true)
+                                {
+                                    <span class="absolute left-2 top-2 rounded-md bg-secondary/90 px-2 py-0.5 text-xs font-semibold text-white shadow">
+                                        Kit
+                                    </span>
+                                }
+                            </div>
+                            @if (!string.IsNullOrWhiteSpace(Data.part?.image_url))
+                            {
+                                <div class="mt-2 space-y-1 text-xs">
+                                    <a class="text-sky-600 hover:underline" href="@Data.part.image_url" target="_blank" rel="noopener">Open full image</a>
+                                    <div class="break-all text-gray-500 dark:text-gray-400">@Data.part.image_url</div>
+                                </div>
+                            }
+                            else
+                            {
+                                <div class="mt-2 text-xs text-gray-500 dark:text-gray-400">No image available.</div>
+                            }
+                        </div>
+
+                        <div class="flex-1 min-w-0">
+                            <div class="text-xs text-gray-500 dark:text-gray-300">@Data.part?.brand_name</div>
+                            <h1 class="text-2xl font-semibold mt-1">@Data.part?.name</h1>
+                            <div class="text-sm text-gray-500 dark:text-gray-400">@Data.part?.sku</div>
+
+                            <div class="mt-3 flex flex-wrap gap-2">
+                                <button class="inline-flex items-center justify-center rounded-xl border border-black/10 dark:border-white/10 px-3 py-1.5 text-sm hover:bg-black/5 dark:hover:bg-white/10 transition disabled:opacity-50 active:scale-95"
+                                        @onclick="AddToCompare" disabled="@(!CanCompare)">
+                                    Add to compare
+                                </button>
+                            </div>
+
+                            @if (!string.IsNullOrWhiteSpace(Data.part?.description))
+                            {
+                                <div class="mt-4">
+                                    <div class="text-sm font-semibold">Description</div>
+                                    <p class="mt-1 whitespace-pre-wrap text-sm text-gray-600 dark:text-gray-300">@Data.part!.description</p>
+                                </div>
+                            }
+
+                            <div class="mt-4">
+                                <div class="text-sm font-semibold">Categories:</div>
+                                @if (Data.categories.Any())
+                                {
+                                    <div class="mt-1 flex flex-wrap gap-2">
+                                        @foreach (var c in Data.categories)
+                                        {
+                                            <span class="text-xs rounded-md px-2 py-0.5 bg-gray-100 text-gray-700 dark:bg-white/10 dark:text-gray-200 border border-black/5 dark:border-white/10">@c.name</span>
+                                        }
+                                    </div>
+                                }
+                                else
+                                {
+                                    <span class="text-sm text-gray-500 dark:text-gray-400">None</span>
+                                }
+                            </div>
+
+                            <div class="mt-6">
+                                <h3 class="text-lg font-medium">Fitment</h3>
+                                @if (Data.fitment.Any())
+                                {
+                                    <div class="mt-2 flex flex-wrap gap-2">
+                                        @foreach (var f in Data.fitment)
+                                        {
+                                            <span class="text-xs rounded-md px-2 py-0.5 bg-emerald-50 text-emerald-800 border border-emerald-200/60 dark:bg-emerald-900/30 dark:text-emerald-200">
+                                                @f.code @FormatYears(f.years_start, f.years_end)
+                                            </span>
+                                        }
+                                    </div>
+                                }
+                                else
+                                {
+                                    <p class="text-sm text-gray-500 dark:text-gray-400 mt-1">No fitment data.</p>
+                                }
+                            </div>
+
+                            @if (Data.part?.is_kit == true)
+                            {
+                                <div class="mt-6">
+                                    <h3 class="text-lg font-medium">Components</h3>
+                                    @if (Data.components.Any())
+                                    {
+                                        <ul class="mt-2 space-y-1 text-sm">
+                                            @foreach (var c in Data.components)
+                                            {
+                                                <li class="text-gray-700 dark:text-gray-300">@c.sku × @c.qty_per_parent — @c.name</li>
+                                            }
+                                        </ul>
+                                    }
+                                    else
+                                    {
+                                        <p class="text-sm text-gray-500 dark:text-gray-400 mt-1">No BOM available.</p>
+                                    }
+                                </div>
+                            }
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Right: Sticky buy -->
+            <div class="lg:col-span-4">
+                <div class="lg:sticky lg:top-4 rounded-xl border border-black/5 dark:border-white/10 bg-white dark:bg-[#0F1720] shadow-sm p-4">
+                    <h3 class="text-lg font-medium">Buy</h3>
+
+                    @if (Data.offerings.Any())
+                    {
+                        <ul class="mt-2 divide-y divide-black/5 dark:divide-white/10">
+                            @foreach (var o in Data.offerings)
+                            {
+                                <li class="py-3 flex items-center justify-between gap-3">
+                                    <div>
+                                        <div class="text-sm font-semibold">@o.vendor</div>
+                                        <div class="text-xs text-gray-500 dark:text-gray-400">@o.currency @o.price</div>
+                                    </div>
+                                    <a class="inline-flex items-center justify-center rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs px-3 py-1.5 transition"
+                                       href="@GetBuyLink(Data.part!.part_id, o.offering_id)" target="_blank" rel="noopener noreferrer">Buy</a>
+                                </li>
+                            }
+                        </ul>
+                    }
+                    else
+                    {
+                        <p class="text-sm text-gray-500 dark:text-gray-400 mt-2">No live offerings. Request a quote.</p>
+                    }
+
+                    <div class="mt-3 grid gap-2">
+                        <button class="inline-flex items-center justify-center rounded-xl border border-sky-600 text-sky-600 px-3 py-2 text-sm hover:bg-sky-50 dark:hover:bg-sky-900/20 transition"
+                                @onclick="() => AddToBuild(Data.part!.part_id)">
+                            Add to build
+                        </button>
+                        <button class="inline-flex items-center justify-center rounded-xl border border-black/10 dark:border-white/10 px-3 py-2 text-sm hover:bg-black/5 dark:hover:bg-white/10 transition"
+                                type="button" @onclick="ToggleSubstitutes">
+                            @(ShowSubstitutes ? "Hide substitutes" : "Find substitutes")
+                        </button>
+                    </div>
+
+                    <!-- Price alerts -->
+                    <div class="mt-5">
+                        <h4 class="text-sm font-semibold mb-2">Price alerts</h4>
+                        <form @onsubmit="SubmitPriceAlertAsync" @onsubmit:preventDefault class="space-y-3">
+                            @if (!Session.IsSignedIn)
+                            {
+                                <div>
+                                    <label class="block text-xs text-gray-600 dark:text-gray-300 mb-1">Email</label>
+                                    <InputText class="w-full rounded-xl border border-black/10 dark:border-white/10 bg-white dark:bg-white/5 px-3 py-2 text-sm"
+                                               @bind-Value="AlertEmail" autocomplete="email" />
+                                </div>
+                            }
+                            else if (!Session.EmailVerified)
+                            {
+                                <div class="rounded-md border border-amber-200/60 bg-amber-50 text-amber-900 dark:bg-amber-900/30 dark:text-amber-200 px-3 py-2 text-sm">
+                                    Verify your email in <a class="underline" href="/account/plan">account settings</a> to enable alerts.
+                                </div>
+                            }
+                            else if (!string.IsNullOrWhiteSpace(Session.Email))
+                            {
+                                <div class="rounded-md border border-sky-200/60 bg-sky-50 text-sky-800 dark:bg-sky-900/30 dark:text-sky-200 px-3 py-2 text-sm">
+                                    We’ll send alerts to @Session.Email.
+                                </div>
+                            }
+
+                            <div>
+                                <label class="block text-xs text-gray-600 dark:text-gray-300 mb-1">Target price</label>
+                                <InputNumber class="w-full rounded-xl border border-black/10 dark:border-white/10 bg-white dark:bg-white/5 px-3 py-2 text-sm"
+                                             @bind-Value="AlertTargetPrice" TValue="decimal?" step="0.01" />
+                            </div>
+
+                            <label class="inline-flex items-center gap-2 text-sm">
+                                <InputCheckbox class="h-4 w-4 rounded border-black/20 dark:border-white/20"
+                                               @bind-Value="AlertStockOnly" />
+                                <span>Notify me when back in stock</span>
+                            </label>
+
+                            <button type="submit"
+                                    class="w-full inline-flex items-center justify-center rounded-xl bg-sky-600 hover:bg-sky-700 text-white text-sm px-3 py-2 transition disabled:opacity-50"
+                                    disabled="@(AlertSubmitting || (Session.IsSignedIn && !Session.EmailVerified))">
+                                Notify me
+                            </button>
+                        </form>
+
+                        @if (!string.IsNullOrEmpty(AlertError))
+                        {
+                            <div class="mt-2 rounded-md border border-red-200/60 bg-red-50 text-red-800 dark:bg-red-900/30 dark:text-red-200 px-3 py-2 text-sm">@AlertError</div>
+                        }
+                        @if (!string.IsNullOrEmpty(AlertSuccess))
+                        {
+                            <div class="mt-2 rounded-md border border-emerald-200/60 bg-emerald-50 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-200 px-3 py-2 text-sm">@AlertSuccess</div>
+                        }
+                    </div>
+                </div>
+
+                @if (ShowSubstitutes)
+                {
+                    <div class="mt-4 rounded-xl border border-black/5 dark:border-white/10 bg-white dark:bg-[#0F1720] shadow-sm p-4">
+                        <div class="flex items-center justify-between">
+                            <h3 class="text-sm font-semibold">Substitutes</h3>
+                            <button type="button" class="text-sm text-sky-600 hover:underline" @onclick="ToggleSubstitutes">Close</button>
+                        </div>
+
+                        @if (SubstitutesLoading)
+                        {
+                            <p class="mt-2 text-sm text-gray-500 dark:text-gray-300">Loading substitutes…</p>
+                        }
+                        else if (!string.IsNullOrEmpty(SubstitutesError))
+                        {
+                            <div class="mt-2 rounded-md border border-red-200/60 bg-red-50 text-red-800 dark:bg-red-900/30 dark:text-red-200 px-3 py-2 text-sm">
+                                @SubstitutesError
+                            </div>
+                        }
+                        else if (Substitutes.Count == 0)
+                        {
+                            <p class="mt-2 text-sm text-gray-500 dark:text-gray-300">No close substitutes found.</p>
+                        }
+                        else
+                        {
+                            <ul class="mt-3 divide-y divide-black/5 dark:divide-white/10">
+                                @foreach (var item in Substitutes)
+                                {
+                                    <li class="py-3">
+                                        <div class="flex items-start justify-between gap-3">
+                                            <div>
+                                                <div class="text-sm font-semibold">@item.name</div>
+                                                <div class="text-xs text-gray-500 dark:text-gray-400">@item.brand • @item.sku</div>
+                                                @if (item.score > 0)
+                                                {
+                                                    <span class="mt-2 inline-block text-xs rounded-md px-2 py-0.5 bg-sky-50 text-sky-800 border border-sky-200/60 dark:bg-sky-900/30 dark:text-sky-200">
+                                                        Match score @item.score
+                                                    </span>
+                                                }
+                                            </div>
+                                            <div class="text-sm font-semibold">@FormatPrice(item.price)</div>
+                                        </div>
+                                        <div class="mt-2 flex gap-2">
+                                            <button type="button"
+                                                    class="inline-flex items-center justify-center rounded-xl border border-sky-600 text-sky-600 px-3 py-1.5 text-xs hover:bg-sky-50 dark:hover:bg-sky-900/20 transition"
+                                                    @onclick="() => AddSubstituteToBuild(item.part_id)">
+                                                Add to build
+                                            </button>
+                                            <a class="inline-flex items-center justify-center rounded-xl bg-gray-800 hover:bg-gray-900 text-white px-3 py-1.5 text-xs transition"
+                                               href="@($"/shop/parts/{item.sku}")">
+                                                View
+                                            </a>
+                                        </div>
+                                    </li>
+                                }
+                            </ul>
+                        }
+                    </div>
+                }
+            </div> <!-- /Right -->
+        </div> <!-- /grid -->
+    </div> <!-- /container -->
+}
+
+@if (ShowBuildPicker)
+{
+    <div class="fixed inset-0 bg-black/50 z-40"></div>
+    <div class="fixed inset-0 z-50 flex items-center justify-center p-4">
+        <div class="w-full max-w-lg rounded-xl border border-black/10 dark:border-white/10 bg-white dark:bg-[#0F1720] shadow-xl">
+            <div class="flex items-center justify-between px-4 py-3 border-b border-black/10 dark:border-white/10">
+                <h5 class="text-lg font-semibold">Add to build</h5>
+                <button class="text-sm opacity-70 hover:opacity-100" @onclick="CloseBuildPicker" disabled="@BuildPickerSubmitting">×</button>
+            </div>
+
+            <div class="p-4 space-y-3">
+                @if (BuildPickerLoading)
+                {
+                    <div class="flex items-center gap-2 text-sm">
+                        <svg class="animate-spin h-4 w-4" viewBox="0 0 24 24">
+                            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4A4 4 0 004 12z"></path>
+                        </svg>
+                        <span>Loading…</span>
+                    </div>
+                }
+                else if (!string.IsNullOrEmpty(BuildPickerError))
+                {
+                    <div class="rounded-lg border border-red-200/60 bg-red-50 text-red-800 dark:bg-red-900/30 dark:text-red-200 px-3 py-2 text-sm">
+                        @BuildPickerError
+                    </div>
+                }
+                else if (PendingSelection is not null)
+                {
+                    <div>
+                        <label class="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">Build</label>
+                        <select class="w-full rounded-xl border border-black/10 dark:border-white/10 bg-white dark:bg-white/5 px-3 py-2 text-sm"
+                                @bind="SelectedBuildId">
+                            @foreach (var build in BuildOptions)
+                            {
+                                <option value="@build.BuildId">@build.Name</option>
+                            }
+                        </select>
+                    </div>
+
+                    @if (PendingSelection.Categories.Count > 0)
+                    {
+                        <div>
+                            <label class="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">Category</label>
+                            <select class="w-full rounded-xl border border-black/10 dark:border-white/10 bg-white dark:bg-white/5 px-3 py-2 text-sm"
+                                    @bind="SelectedCategoryId">
+                                @foreach (var cat in PendingSelection.Categories)
+                                {
+                                    <option value="@cat.CategoryId">@cat.Name</option>
+                                }
+                            </select>
+                        </div>
+                    }
+                    else
+                    {
+                        <div class="rounded-lg border border-sky-200/60 bg-sky-50 text-sky-800 dark:bg-sky-900/30 dark:text-sky-200 px-3 py-2 text-sm">
+                            This part will use its primary category automatically.
+                        </div>
+                    }
+
+                    <div class="text-sm"><strong>Part:</strong> @PendingSelection.PartName</div>
+                }
+            </div>
+
+            <div class="flex items-center justify-end gap-2 px-4 py-3 border-t border-black/10 dark:border-white/10">
+                <button class="inline-flex items-center justify-center rounded-xl border border-black/10 dark:border-white/10 text-sm px-4 py-2 hover:bg-black/5 dark:hover:bg-white/10 transition"
+                        @onclick="CloseBuildPicker" disabled="@BuildPickerSubmitting">Cancel</button>
+                <button class="inline-flex items-center justify-center rounded-xl bg-sky-600 hover:bg-sky-700 text-white text-sm px-4 py-2 transition disabled:opacity-50"
+                        @onclick="SubmitAddToBuildAsync"
+                        disabled="@(BuildPickerSubmitting || BuildPickerLoading || PendingSelection is null)">
+                    @(BuildPickerSubmitting ? "Adding…" : "Add")
+                </button>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter] public string Key { get; set; } = string.Empty;
+
+    // State
+    ShopPartResponse? Data;
+    bool IsLoading = true;
+    string? ErrorMessage;
+    string? SuccessMessage;
+    string? InlineErrorMessage;
+
+    // Alerts
+    string? AlertError;
+    string? AlertSuccess;
+    bool AlertSubmitting;
+    string? AlertEmail;
+    decimal? AlertTargetPrice;
+    bool AlertStockOnly;
+
+    private const string PlaceholderImageDataUri =
+        "data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 width=%27280%27 height=%27280%27 viewBox=%270 0 280 280%27%3E%3Crect width=%27280%27 height=%27280%27 fill=%27%23f5f5f7%27/%3E%3Cpath d=%27M70 190l40-50 30 35 30-45 40 60H70z%27 fill=%27%23d4d4d8%27/%3E%3Ccircle cx=%2796%27 cy=%2796%27 r=%2725%27 fill=%27%23d4d4d8%27/%3E%3C/svg%3E";
+
+    string PartImageSource => string.IsNullOrWhiteSpace(Data?.part?.image_url)
+        ? PlaceholderImageDataUri
+        : Data.part.image_url!;
+
+    // Substitutes
+    bool ShowSubstitutes;
+    bool SubstitutesLoading;
+    string? SubstitutesError;
+    List<SubstituteDto> Substitutes { get; set; } = new();
+
+    // Build picker
+    List<BuildSummaryDto> BuildOptions { get; set; } = new();
+    bool BuildOptionsLoaded;
+    bool ShowBuildPicker;
+    bool BuildPickerLoading;
+    bool BuildPickerSubmitting;
+    string? BuildPickerError;
+    BuildSelectionContext? PendingSelection;
+    long? SelectedBuildId;
+    long? SelectedCategoryId;
+
+    // Meta
+    string PageTitleText = "Part";
+    string? CanonicalUrl;
+
+    bool CanCompare => Data?.part?.sku is { Length: > 0 };
+
+    protected override async Task OnInitializedAsync()
+    {
+        await CompareTray.InitializeAsync();
+        try { await Session.HydrateAsync(); } catch { /* ignore */ }
+        if (string.IsNullOrWhiteSpace(AlertEmail) && !string.IsNullOrWhiteSpace(Session.Email))
+            AlertEmail = Session.Email;
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        await LoadAsync();
+    }
+
+    async Task LoadAsync()
+    {
+        IsLoading = true;
+        ErrorMessage = null;
+        SuccessMessage = null;
+        InlineErrorMessage = null;
+        AlertError = null;
+        AlertSuccess = null;
+        SubstitutesError = null;
+        ShowSubstitutes = false;
+        Substitutes.Clear();
+
+        try
+        {
+            var response = await Http.GetAsync($"/api/shop/parts/{Key}");
+            if (response.StatusCode == HttpStatusCode.NotFound)
+            {
+                ErrorMessage = "Part not found.";
+                PageTitleText = "Part";
+                CanonicalUrl = null;
+                return;
+            }
+
+            response.EnsureSuccessStatusCode();
+            Data = await response.Content.ReadFromJsonAsync<ShopPartResponse>();
+            UpdateMetadata();
+        }
+        catch (Exception ex)
+        {
+            ErrorMessage = ex.Message;
+            PageTitleText = "Part";
+            CanonicalUrl = null;
+        }
+        finally
+        {
+            IsLoading = false;
+        }
+    }
+
+    void UpdateMetadata()
+    {
+        if (Data?.part is null)
+        {
+            PageTitleText = "Part";
+            CanonicalUrl = null;
+            return;
+        }
+
+        var name = string.IsNullOrWhiteSpace(Data.part.name) ? "Part" : Data.part.name!;
+        PageTitleText = name;
+
+        var sku = Data.part.sku;
+        if (!string.IsNullOrWhiteSpace(sku))
+        {
+            var baseUri = Nav.BaseUri.TrimEnd('/');
+            CanonicalUrl = $"{baseUri}/shop/parts/{sku}";
+        }
+    }
+
+    static string FormatYears(short? start, short? end)
+    {
+        if (start is null && end is null) return string.Empty;
+        if (start is not null && end is not null) return start == end ? start.Value.ToString() : $"{start}-{end}";
+        return start?.ToString() ?? end?.ToString() ?? string.Empty;
+    }
+
+    static string FormatPrice(decimal? price)
+        => price.HasValue && price.Value > 0 ? price.Value.ToString("C") : "—";
+
+    async Task AddToCompare()
+    {
+        if (!CanCompare || Data?.part?.sku is null)
+        {
+            return;
+        }
+
+        var sku = Data.part.sku;
+        var added = await CompareTray.AddAsync(sku);
+        Toast.Show(added ? $"Added {sku} to compare." : $"{sku} is already in compare.",
+            added ? ToastKind.Success : ToastKind.Info);
+    }
+
+    async Task ToggleSubstitutes()
+    {
+        if (Data?.part?.sku is null) return;
+
+        if (ShowSubstitutes)
+        {
+            ShowSubstitutes = false;
+            return;
+        }
+
+        ShowSubstitutes = true;
+        if (Substitutes.Count == 0)
+            await LoadSubstitutesAsync();
+    }
+
+    async Task LoadSubstitutesAsync()
+    {
+        if (Data?.part?.sku is null) return;
+        SubstitutesLoading = true;
+        SubstitutesError = null;
+
+        try
+        {
+            var list = await Http.GetFromJsonAsync<List<SubstituteDto>>($"/api/substitutes/{Data.part.sku}");
+            Substitutes = list ?? new List<SubstituteDto>();
+        }
+        catch (HttpRequestException ex)
+        {
+            SubstitutesError = $"Server error: {ex.Message}";
+        }
+        catch (Exception ex)
+        {
+            SubstitutesError = ex.Message;
+        }
+        finally
+        {
+            SubstitutesLoading = false;
+        }
+    }
+
+    async Task SubmitPriceAlertAsync()
+    {
+        if (Data?.part is null) return;
+
+        AlertError = null;
+        AlertSuccess = null;
+
+        var email = Session.IsSignedIn ? null : AlertEmail?.Trim();
+        if (!Session.IsSignedIn) AlertEmail = email;
+
+        if (Session.IsSignedIn && !Session.EmailVerified)
+        {
+            AlertError = "Verify your email to enable alerts.";
+            return;
+        }
+
+        if (!Session.IsSignedIn && string.IsNullOrWhiteSpace(email))
+        {
+            AlertError = "Enter an email to receive alerts.";
+            return;
+        }
+
+        AlertSubmitting = true;
+
+        try
+        {
+            var payload = new
+            {
+                part_id = Data.part.part_id,
+                target_price = AlertTargetPrice,
+                stock_only = AlertStockOnly,
+                email
+            };
+
+            var response = await Http.PostAsJsonAsync("/api/alerts/price", payload);
+            if (response.IsSuccessStatusCode)
+            {
+                AlertApiResponse? apiResponse = null;
+                try { apiResponse = await response.Content.ReadFromJsonAsync<AlertApiResponse>(); } catch { }
+
+                var pending = apiResponse?.PendingVerification ?? (!Session.IsSignedIn);
+                AlertSuccess = pending
+                    ? "Check your email to confirm this alert."
+                    : "We’ll email you when this matches your alert.";
+            }
+            else
+            {
+                ApiError? error = null;
+                try { error = await response.Content.ReadFromJsonAsync<ApiError>(); } catch { }
+                AlertError = MapAlertError(error?.Error, response.StatusCode);
+            }
+        }
+        catch (Exception ex)
+        {
+            AlertError = ex.Message;
+        }
+        finally
+        {
+            AlertSubmitting = false;
+        }
+    }
+
+    static string MapAlertError(string? code, HttpStatusCode status)
+        => code switch
+        {
+            "email_not_verified" => "Verify your email to enable alerts.",
+            "email_bounced" => "We can’t send to this email address. Update it in account settings.",
+            "email_unsubscribed" => "You’ve unsubscribed from alerts. Re-enable emails in account settings.",
+            "email_or_user_required" => "Enter an email to receive alerts.",
+            _ => status == HttpStatusCode.Forbidden
+                ? "Email alerts are disabled for this address."
+                : "Unable to save alert right now. Try again later."
+        };
+
+    sealed class AlertApiResponse
+    {
+        [JsonPropertyName("ok")] public bool Ok { get; set; }
+        [JsonPropertyName("pending_verification")] public bool PendingVerification { get; set; }
+    }
+
+    sealed class ApiError
+    {
+        [JsonPropertyName("error")] public string? Error { get; set; }
+    }
+
+    string GetBuyLink(long partId, long? offeringId = null)
+        => offeringId is null ? $"/shop/go?partId={partId}" : $"/shop/go?partId={partId}&offeringId={offeringId}";
+
+    async Task AddToBuild(long partId)
+    {
+        var categories = Data?.categories?.Select(c => new CategorySummary(c.category_id, c.name, c.is_primary)).ToList();
+        var display = Data?.part?.name ?? Data?.part?.sku ?? partId.ToString();
+        await OpenBuildPickerAsync(partId, display, categories, Data?.part?.sku);
+    }
+
+    async Task AddSubstituteToBuild(long partId)
+    {
+        var sub = Substitutes.FirstOrDefault(s => s.part_id == partId);
+        var name = sub?.name ?? partId.ToString();
+        await OpenBuildPickerAsync(partId, name, null, sub?.sku);
+    }
+
+    async Task OpenBuildPickerAsync(long partId, string partName, List<CategorySummary>? categories, string? sku)
+    {
+        SuccessMessage = null;
+        InlineErrorMessage = null;
+
+        if (!Session.IsSignedIn)
+        {
+            InlineErrorMessage = "Sign in to add parts to a build.";
+            return;
+        }
+
+        await EnsureBuildOptionsAsync();
+        if (BuildOptions.Count == 0)
+        {
+            InlineErrorMessage = "Create a build first to add parts.";
+            return;
+        }
+
+        ShowBuildPicker = true;
+        BuildPickerLoading = true;
+        BuildPickerSubmitting = false;
+        BuildPickerError = null;
+        PendingSelection = null;
+        SelectedCategoryId = null;
+
+        try
+        {
+            var categoryList = categories ?? await LoadCategoriesAsync(partId, sku);
+            var ordered = categoryList
+                .OrderByDescending(c => c.IsPrimary)
+                .ThenBy(c => c.Name)
+                .ToList();
+
+            PendingSelection = new BuildSelectionContext(partId, partName, ordered);
+            SelectedCategoryId = ordered.FirstOrDefault()?.CategoryId;
+            SelectedBuildId ??= BuildOptions.FirstOrDefault()?.BuildId;
+        }
+        catch (Exception ex)
+        {
+            BuildPickerError = ex.Message;
+        }
+        finally
+        {
+            BuildPickerLoading = false;
+            StateHasChanged();
+        }
+    }
+
+    async Task<List<CategorySummary>> LoadCategoriesAsync(long partId, string? sku)
+    {
+        try
+        {
+            var key = !string.IsNullOrWhiteSpace(sku) ? sku! : partId.ToString();
+            var meta = await Http.GetFromJsonAsync<ShopPartMeta>($"/api/shop/parts/{key}");
+            return meta?.Categories ?? new List<CategorySummary>();
+        }
+        catch
+        {
+            return new List<CategorySummary>();
+        }
+    }
+
+    async Task EnsureBuildOptionsAsync()
+    {
+        if (BuildOptionsLoaded || BuildPickerLoading) return;
+
+        BuildPickerLoading = true;
+        BuildPickerError = null;
+
+        try
+        {
+            var result = await Http.GetFromJsonAsync<List<BuildSummaryDto>>("/api/builds?page_size=200&include_archived=false&include_shared=true");
+            BuildOptions = result?.Where(b => !b.IsArchived).OrderByDescending(b => b.UpdatedAt).ToList() ?? new List<BuildSummaryDto>();
+            BuildOptionsLoaded = true;
+
+            if (BuildOptions.Count > 0)
+                SelectedBuildId ??= BuildOptions[0].BuildId;
+        }
+        catch (Exception ex)
+        {
+            BuildPickerError = ex.Message;
+        }
+        finally
+        {
+            BuildPickerLoading = false;
+        }
+    }
+
+    async Task SubmitAddToBuildAsync()
+    {
+        if (PendingSelection is null || SelectedBuildId is null)
+        {
+            BuildPickerError = "Select a build.";
+            return;
+        }
+
+        BuildPickerSubmitting = true;
+        BuildPickerError = null;
+
+        try
+        {
+            var payload = new BuildAddPartRequest
+            {
+                PartId = PendingSelection.PartId,
+                Qty = 1m,
+                CategoryId = SelectedCategoryId
+            };
+
+            var response = await Http.PostAsJsonAsync($"/api/builds/{SelectedBuildId}/add-part", payload);
+            if (!response.IsSuccessStatusCode)
+            {
+                BuildPickerError = await ReadErrorMessageAsync(response, "Unable to add part to build.");
+                return;
+            }
+
+            ShowBuildPicker = false;
+            SuccessMessage = $"Added {PendingSelection.PartName} to build.";
+        }
+        catch (HttpRequestException ex) when (ex.StatusCode == HttpStatusCode.Unauthorized)
+        {
+            BuildPickerError = "Sign in to add parts.";
+        }
+        catch (Exception ex)
+        {
+            BuildPickerError = ex.Message;
+        }
+        finally
+        {
+            BuildPickerSubmitting = false;
+            PendingSelection = null;
+        }
+    }
+
+    private static async Task<string> ReadErrorMessageAsync(HttpResponseMessage response, string fallback)
+    {
+        try
+        {
+            var text = await response.Content.ReadAsStringAsync();
+            if (!string.IsNullOrWhiteSpace(text))
+            {
+                try
+                {
+                    using var doc = JsonDocument.Parse(text);
+                    if (doc.RootElement.TryGetProperty("message", out var messageProp) && messageProp.ValueKind == JsonValueKind.String)
+                        return messageProp.GetString()!;
+                    if (doc.RootElement.TryGetProperty("error", out var errorProp) && errorProp.ValueKind == JsonValueKind.String)
+                        return errorProp.GetString()!;
+                }
+                catch (JsonException) { }
+
+                return text.Length > 200 ? text.Substring(0, 200) + "…" : text;
+            }
+        }
+        catch { }
+
+        return fallback;
+    }
+
+    void CloseBuildPicker()
+    {
+        ShowBuildPicker = false;
+        BuildPickerError = null;
+        PendingSelection = null;
+    }
+
+    void DismissSuccess() => SuccessMessage = null;
+
+    // DTOs
+    class ShopPartResponse
+    {
+        public PartDto? part { get; set; }
+        public List<CategoryDto> categories { get; set; } = new();
+        public List<FitmentDto> fitment { get; set; } = new();
+        public List<OfferingDto> offerings { get; set; } = new();
+        public List<ComponentDto> components { get; set; } = new();
+    }
+
+    class PartDto
+    {
+        public long part_id { get; set; }
+        public string? sku { get; set; }
+        public string? name { get; set; }
+        public string? brand_name { get; set; }
+        public string? image_url { get; set; }
+        public string? description { get; set; }
+        public bool is_kit { get; set; }
+    }
+    class CategoryDto { public long category_id { get; set; } public string name { get; set; } = string.Empty; public bool is_primary { get; set; } }
+    class FitmentDto { public string code { get; set; } = string.Empty; public short? years_start { get; set; } public short? years_end { get; set; } public string? notes { get; set; } }
+    class OfferingDto { public long offering_id { get; set; } public string vendor { get; set; } = string.Empty; public decimal price { get; set; } public string currency { get; set; } = "USD"; public string? availability { get; set; } public string? url { get; set; } public string? affiliate_url { get; set; } }
+    class ComponentDto { public long child_part_id { get; set; } public string sku { get; set; } = string.Empty; public string name { get; set; } = string.Empty; public decimal qty_per_parent { get; set; } }
+    class SubstituteDto { public long part_id { get; set; } public string sku { get; set; } = string.Empty; public string name { get; set; } = string.Empty; public string brand { get; set; } = string.Empty; public decimal price { get; set; } public int score { get; set; } }
+}

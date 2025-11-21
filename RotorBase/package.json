@@ -1,0 +1,22 @@
+{
+  "name": "rotorbase",
+  "private": true,
+  "version": "0.0.0",
+  "scripts": {
+    "build:css": "tailwindcss -i ./wwwroot/css/app.tailwind.css -o ./wwwroot/css/app.tailwind.build.css --minify",
+    "dev:css": "tailwindcss -i ./wwwroot/css/app.tailwind.css -o ./wwwroot/css/app.tailwind.build.css --watch",
+    "dev": "concurrently \"npm:dev:css\" \"dotnet watch\"",
+    "build": "npm run build:css && dotnet build"
+  },
+  "devDependencies": {
+    "@tailwindcss/forms": "^0.5.8",
+    "@tailwindcss/typography": "^0.5.15",
+    "autoprefixer": "^10.4.20",
+    "concurrently": "^9.0.1",
+    "postcss": "^8.4.49",
+    "tailwindcss": "^3.4.13"
+  },
+  "dependencies": {
+    "three": "^0.180.0"
+  }
+}

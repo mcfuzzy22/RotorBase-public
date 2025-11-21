@@ -1,0 +1,59 @@
+@using RotorBase.Services
+@inject ToastService Toast
+@implements IDisposable
+@rendermode InteractiveServer
+@if (_messages.Count > 0)
+{
+    <div class="fixed bottom-4 right-4 z-[2000] space-y-2">
+        @foreach (var toast in _messages)
+        {
+            <div class="@CssClass(toast.Kind) rounded-xl px-3 py-2 shadow-lg border text-sm">
+                @toast.Text
+            </div>
+        }
+    </div>
+}
+
+@code {
+    private readonly List<ToastMessage> _messages = new();
+
+    protected override void OnInitialized()
+    {
+        Toast.OnShow += HandleShow;
+    }
+
+    private void HandleShow(ToastMessage toast)
+    {
+        _messages.Add(toast);
+        InvokeAsync(StateHasChanged);
+        _ = RemoveAsync(toast);
+    }
+
+    private async Task RemoveAsync(ToastMessage toast)
+    {
+        try
+        {
+            await Task.Delay(toast.Duration);
+        }
+        catch
+        {
+            // ignore cancellation
+        }
+
+        _messages.Remove(toast);
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private static string CssClass(ToastKind kind) => kind switch
+    {
+        ToastKind.Success => "bg-emerald-600 text-white border-emerald-700",
+        ToastKind.Warning => "bg-amber-500 text-white border-amber-600",
+        ToastKind.Error => "bg-red-600 text-white border-red-700",
+        _ => "bg-slate-800 text-white border-slate-900"
+    };
+
+    public void Dispose()
+    {
+        Toast.OnShow -= HandleShow;
+    }
+}

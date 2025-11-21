@@ -1,0 +1,142 @@
+:root {
+    color-scheme: light dark;
+}
+
+.dark {
+    color-scheme: dark;
+}
+
+.blazor-error-boundary {
+    border-radius: 1rem;
+    border: 1px solid rgb(var(--color-danger) / 0.4);
+    background: rgb(var(--color-danger) / 0.08);
+    padding: 1rem 1.25rem;
+    color: rgb(var(--color-danger));
+    font-weight: 600;
+}
+
+.blazor-error-boundary::after {
+    content: "Something went wrong.";
+}
+
+/* ---------- Bootstrap-friendly dark overrides ---------- */
+.dark body {
+    background-color: rgb(var(--color-bg));
+    color: rgb(var(--color-fg));
+}
+
+.dark .bg-white {
+    background-color: rgb(var(--color-surface)) !important;
+}
+
+.dark .text-gray-900 {
+    color: rgb(var(--color-fg)) !important;
+}
+
+.dark .border-gray-200 {
+    border-color: rgb(var(--color-border) / 0.6) !important;
+}
+
+.dark .card,
+.dark .modal-content,
+.dark .list-group-item,
+.dark .dropdown-menu,
+.dark .popover {
+    background-color: rgb(var(--color-surface)) !important;
+    color: rgb(var(--color-fg)) !important;
+    border-color: rgb(var(--color-border) / 0.6) !important;
+}
+
+.dark .alert {
+    background-color: rgb(var(--color-surface)) !important;
+    color: rgb(var(--color-fg)) !important;
+    border-color: rgb(var(--color-border) / 0.6) !important;
+}
+
+.dark .alert-info { border-color: rgb(var(--color-info) / 0.4) !important; color: rgb(var(--color-info)) !important; }
+.dark .alert-success { border-color: rgb(var(--color-success) / 0.4) !important; color: rgb(var(--color-success)) !important; }
+.dark .alert-warning { border-color: rgb(var(--color-warning) / 0.4) !important; color: rgb(var(--color-warning)) !important; }
+.dark .alert-danger { border-color: rgb(var(--color-danger) / 0.4) !important; color: rgb(var(--color-danger)) !important; }
+
+.dark .table {
+    color: rgb(var(--color-fg));
+    border-color: rgb(var(--color-border) / 0.6);
+}
+
+.dark .table > :not(caption) > * > * {
+    background-color: transparent;
+    color: inherit;
+    border-color: rgb(var(--color-border) / 0.6);
+}
+
+.dark .table-striped > tbody > tr:nth-of-type(odd) > * {
+    --stripe-alpha: 0.08;
+    background-color: rgb(var(--color-muted) / var(--stripe-alpha));
+}
+
+.dark .form-control,
+.dark .form-select,
+.dark .form-check-input,
+.dark .form-control:focus,
+.dark .form-select:focus {
+    background-color: rgb(var(--color-muted)) !important;
+    color: rgb(var(--color-fg)) !important;
+    border-color: rgb(var(--color-border) / 0.6) !important;
+}
+
+.dark .list-group-item-action:hover,
+.dark .list-group-item-action:focus {
+    background-color: rgb(var(--color-muted) / 0.9) !important;
+    color: rgb(var(--color-fg)) !important;
+}
+
+.dark .btn-outline-secondary,
+.dark .btn-outline-danger,
+.dark .btn-outline-primary {
+    color: rgb(var(--color-fg));
+    border-color: rgb(var(--color-border) / 0.6);
+}
+
+.dark .btn-outline-secondary:hover,
+.dark .btn-outline-danger:hover,
+.dark .btn-outline-primary:hover {
+    background-color: rgb(var(--color-muted));
+}
+
+.dark .modal-backdrop.show {
+    background-color: rgb(0 0 0 / 0.65);
+}
+
+/* ---------- Tailwind utility shims for dark mode ---------- */
+.dark .bg-gray-50,
+.dark .bg-gray-100,
+.dark .bg-slate-50 {
+    background-color: rgb(var(--color-surface)) !important;
+}
+
+.dark .text-gray-500,
+.dark .text-gray-600,
+.dark .text-gray-700 {
+    color: rgb(var(--color-fg) / 0.75) !important;
+}
+
+.dark .text-gray-400 {
+    color: rgb(var(--color-fg) / 0.65) !important;
+}
+
+.dark .border-gray-100,
+.dark .border-gray-300,
+.dark .border-gray-400,
+.dark .border-black\/10 {
+    border-color: rgb(var(--color-border) / 0.6) !important;
+}
+
+.dark .divide-gray-200 > :not([hidden]) ~ :not([hidden]),
+.dark .divide-black\/5 > :not([hidden]) ~ :not([hidden]) {
+    border-color: rgb(var(--color-border) / 0.6) !important;
+}
+
+.dark .hover\:bg-gray-50:hover,
+.dark .hover\:bg-gray-100:hover {
+    background-color: rgb(var(--color-muted)) !important;
+}

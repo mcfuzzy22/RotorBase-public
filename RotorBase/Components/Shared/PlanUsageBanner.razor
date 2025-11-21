@@ -1,0 +1,62 @@
+@inject UserSession Session
+@inject NavigationManager Nav
+@implements IDisposable
+
+@if (!Session.IsSignedIn)
+{
+
+}
+else if (Session.Limits is not null && Session.Limits.Usage is not null)
+{
+    var usage = Session.Limits.Usage;
+    var remainingText = usage.RemainingActive.HasValue
+        ? $"{usage.ActiveBuilds} / {usage.ActiveBuilds + usage.RemainingActive.Value} active builds"
+        : $"{usage.ActiveBuilds} active builds";
+
+    <div class="@BannerClass(usage) flex items-center justify-between gap-3">
+        <span>
+            <strong>Plan Usage:</strong> @remainingText
+            @if (usage.RemainingActive.HasValue && usage.RemainingActive.Value <= 0)
+            {
+                <span class="ml-2">You’ve hit your active build limit.</span>
+            }
+        </span>
+        <span>
+            @if (usage.RemainingActive.HasValue && usage.RemainingActive.Value <= 0)
+            {
+                <button class="btn btn-primary h-8 px-3 text-xs"
+                        @onclick="NavigateToUpgrade">Upgrade Plan</button>
+            }
+            else
+            {
+                <button class="btn btn-soft h-8 px-3 text-xs"
+                        @onclick="NavigateToUpgrade">Upgrade</button>
+            }
+        </span>
+    </div>
+}
+
+@code {
+    protected override void OnInitialized()
+    {
+        Session.Changed += OnSessionChanged;
+        _ = Session.RefreshLimitsAsync();
+    }
+
+    void NavigateToUpgrade() => Nav.NavigateTo("/account/plan");
+
+    string BannerClass(UserSession.LimitsUsageDto.UsageDto usage)
+    {
+        if (usage.RemainingActive.HasValue)
+        {
+            if (usage.RemainingActive.Value <= 0)
+                return "rounded-lg border border-danger/25 bg-danger/5 text-danger px-3 py-2 text-sm";
+            if (usage.RemainingActive.Value <= 1)
+                return "rounded-lg border border-warning/25 bg-warning/10 text-warning px-3 py-2 text-sm";
+        }
+        return "rounded-lg border border-border/60 bg-muted text-foreground/80 px-3 py-2 text-sm";
+    }
+
+    void OnSessionChanged() => InvokeAsync(StateHasChanged);
+    public void Dispose() => Session.Changed -= OnSessionChanged;
+}

@@ -1,0 +1,280 @@
+@inject CompareTrayService Tray
+@implements IAsyncDisposable
+@rendermode InteractiveServer
+@if (Tray.Skus.Count > 0)
+{
+    <!-- Floating tray -->
+    <div class="fixed right-6 bottom-6 z-[1040] bg-surface text-foreground rounded-full shadow-lg border border-border/60 px-4 py-2 flex items-center gap-4 md:max-w-[520px] transition-transform duration-200 @(pulse ? "ring-2 ring-primary/30 scale-[1.02]" : string.Empty)">
+        <!-- chips -->
+        <div class="flex flex-wrap gap-2 max-w-[420px]">
+            @foreach (var sku in Tray.Skus)
+            {
+                <span class="inline-flex items-center gap-1 rounded-full bg-primary/10 text-primary text-xs px-3 py-1 border border-primary/20">
+                    @sku
+                    <button type="button"
+                            class="ml-1 text-primary hover:text-primary/80"
+                            @onclick="() => RemoveAsync(sku)">
+                        ×
+                    </button>
+                </span>
+            }
+        </div>
+
+        <!-- actions -->
+        <div class="relative flex items-center gap-2 shrink-0">
+            <button class="inline-flex items-center justify-center rounded-xl bg-primary text-primary-foreground hover:brightness-110 text-xs px-3 py-2 transition"
+                    @onclick="ToggleAsync">
+                Compare (@Tray.Skus.Count)
+            </button>
+
+            @if (pulse)
+            {
+                <span class="absolute -top-1 -right-1">
+                    <span class="relative flex h-2 w-2">
+                        <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary/60"></span>
+                        <span class="relative inline-flex rounded-full h-2 w-2 bg-primary"></span>
+                    </span>
+                </span>
+            }
+
+            <button class="text-xs text-foreground/60 hover:text-foreground"
+                    @onclick="ClearAsync">
+                Clear
+            </button>
+        </div>
+    </div>
+}
+
+@if (IsOpen)
+{
+    <!-- Overlay -->
+    <div class="fixed inset-0 bg-background/70 backdrop-blur-sm z-[1039]" @onclick="ClosePanel"></div>
+
+    <!-- Slide-in panel -->
+    <div class="fixed right-0 bottom-0 z-[1041] w-full md:w-[520px] max-h-[90vh] bg-surface text-foreground rounded-t-2xl md:rounded-tl-2xl shadow-xl border-l md:border-t border-border/60 overflow-y-auto">
+        <!-- header -->
+        <div class="px-4 py-3 border-b border-border/60 flex items-center justify-between">
+            <h2 class="text-base font-semibold m-0">Compare parts</h2>
+            <button type="button"
+                    class="inline-flex items-center justify-center rounded-xl border border-border/60 text-xs px-3 py-1.5 hover:bg-muted transition"
+                    @onclick="ClosePanel">
+                Close
+            </button>
+        </div>
+
+        <div class="p-4">
+            @if (Tray.Skus.Count < 2)
+            {
+                <p class="text-sm text-foreground/70">Add at least two parts to compare.</p>
+            }
+            else if (IsBusy)
+            {
+                <div class="flex items-center gap-2 text-sm">
+                    <svg class="animate-spin h-4 w-4" viewBox="0 0 24 24">
+                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4A4 4 0 004 12z"></path>
+                    </svg>
+                    <span>Loading comparison…</span>
+                </div>
+            }
+            else if (!string.IsNullOrEmpty(ErrorMessage))
+            {
+                <div class="rounded-md border border-danger/25 bg-danger/5 text-danger px-3 py-2 text-sm">
+                    @ErrorMessage
+                </div>
+            }
+            else if (Result is null || Result.Items.Count < 2)
+            {
+                <p class="text-sm text-foreground/70">Comparison not available.</p>
+            }
+            else
+            {
+                <div class="max-h-[60vh] overflow-auto rounded-lg border border-border/60">
+                    <table class="min-w-full text-sm">
+                        <thead class="bg-muted/60 text-foreground/80">
+                            <tr class="border-b border-border/60">
+                                <th class="text-left font-semibold px-3 py-2 sticky left-0 bg-muted/60">Attribute</th>
+                                @foreach (var item in Result.Items)
+                                {
+                                    <th class="text-left font-semibold px-3 py-2">
+                                        <div class="font-semibold truncate">@item.Name</div>
+                                        <div class="text-xs text-foreground/60">@item.Sku</div>
+                                    </th>
+                                }
+                            </tr>
+                        </thead>
+                        <tbody class="divide-y divide-border/60">
+                            <tr>
+                                <td class="px-3 py-2 text-foreground/70 sticky left-0 bg-surface">Brand</td>
+                                @foreach (var item in Result.Items)
+                                {
+                                    <td class="px-3 py-2">@item.Brand</td>
+                                }
+                            </tr>
+                            <tr>
+                                <td class="px-3 py-2 text-foreground/70 sticky left-0 bg-surface">Status</td>
+                                @foreach (var item in Result.Items)
+                                {
+                                    <td class="px-3 py-2">@(string.IsNullOrWhiteSpace(item.Status) ? "—" : item.Status)</td>
+                                }
+                            </tr>
+                            <tr>
+                                <td class="px-3 py-2 text-foreground/70 sticky left-0 bg-surface">Best price</td>
+                                @foreach (var item in Result.Items)
+                                {
+                                    <td class="px-3 py-2">@FormatPrice(item.BestPrice)</td>
+                                }
+                            </tr>
+
+                            @foreach (var attributeCode in AttributeCodes)
+                            {
+                                <tr>
+                                    <td class="px-3 py-2 text-foreground/70 sticky left-0 bg-surface">@attributeCode</td>
+                                    @foreach (var item in Result.Items)
+                                    {
+                                        <td class="px-3 py-2">@((GetAttribute(item.PartId, attributeCode) ?? "—"))</td>
+                                    }
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            }
+        </div>
+    </div>
+}
+
+@code {
+    private bool IsOpen;
+    private bool IsBusy;
+    private string? ErrorMessage;
+    private CompareTrayService.CompareResult? Result;
+
+    private readonly Dictionary<long, Dictionary<string, string?>> _attributeLookup = new();
+    private List<string> AttributeCodes { get; set; } = new();
+
+    private int lastCount;
+    private bool pulse;
+
+    protected override async Task OnInitializedAsync()
+    {
+        lastCount = Tray.Skus.Count;
+        Tray.Changed += OnTrayChanged;
+        await Tray.InitializeAsync();
+    }
+
+    private async Task ToggleAsync()
+    {
+        if (!IsOpen)
+        {
+            IsOpen = true;
+            await LoadAsync();
+        }
+        else
+        {
+            ClosePanel();
+        }
+    }
+
+    private async Task LoadAsync()
+    {
+        ErrorMessage = null;
+        Result = null;
+        AttributeCodes = new List<string>();
+        _attributeLookup.Clear();
+
+        if (Tray.Skus.Count < 2)
+        {
+            await InvokeAsync(StateHasChanged);
+            return;
+        }
+
+        IsBusy = true;
+        await InvokeAsync(StateHasChanged);
+
+        try
+        {
+            Result = await Tray.FetchAsync();
+            BuildAttributeLookup();
+        }
+        catch (HttpRequestException ex)
+        {
+            ErrorMessage = ex.Message;
+        }
+        catch (Exception ex)
+        {
+            ErrorMessage = ex.Message;
+        }
+        finally
+        {
+            IsBusy = false;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private void BuildAttributeLookup()
+    {
+        _attributeLookup.Clear();
+        AttributeCodes = new List<string>();
+
+        if (Result is null) return;
+
+        var codes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var attr in Result.Attributes)
+        {
+            if (!_attributeLookup.TryGetValue(attr.PartId, out var map))
+            {
+                map = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
+                _attributeLookup[attr.PartId] = map;
+            }
+
+            if (string.IsNullOrWhiteSpace(attr.Code)) continue;
+
+            map[attr.Code] = attr.Value;
+            codes.Add(attr.Code);
+        }
+
+        AttributeCodes = codes.OrderBy(c => c).ToList();
+    }
+
+    private string? GetAttribute(long partId, string code)
+        => _attributeLookup.TryGetValue(partId, out var map) && map.TryGetValue(code, out var value)
+            ? value : null;
+
+    private static string FormatPrice(decimal? price)
+        => price.HasValue && price.Value > 0 ? price.Value.ToString("C") : "—";
+
+    private async Task RemoveAsync(string sku) => await Tray.RemoveAsync(sku);
+    private async Task ClearAsync() => await Tray.ClearAsync();
+
+    private void ClosePanel()
+    {
+        IsOpen = false;
+        StateHasChanged();
+    }
+
+    private void OnTrayChanged()
+    {
+        if (Tray.Skus.Count > lastCount)
+        {
+            _ = TriggerPulseAsync();
+        }
+        lastCount = Tray.Skus.Count;
+        _ = InvokeAsync(StateHasChanged);
+    }
+
+    private async Task TriggerPulseAsync()
+    {
+        pulse = true;
+        await InvokeAsync(StateHasChanged);
+        await Task.Delay(600);
+        pulse = false;
+        await InvokeAsync(StateHasChanged);
+    }
+
+    public ValueTask DisposeAsync()
+    {
+        Tray.Changed -= OnTrayChanged;
+        return ValueTask.CompletedTask;
+    }
+}

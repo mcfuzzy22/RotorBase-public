@@ -1,0 +1,924 @@
+@page "/admin/engine-families"
+@rendermode InteractiveServer
+@using System.Linq
+@using System.Net.Http
+@using System.Net.Http.Json
+@using System.Text.Json
+@using System.Text.Json.Serialization
+@using System.Globalization
+@inject HttpClient Http
+@inject UserSession Session
+
+<h1 class="text-2xl font-semibold tracking-tight mb-4">Admin · Engine Families</h1>
+
+@if (!Session.IsSignedIn)
+{
+    <div role="alert" class="rounded-md border border-blue-200 bg-blue-50 text-blue-800 px-3 py-2 text-sm">Sign in to view admin tools.</div>
+}
+else if (!Session.IsAdmin)
+{
+    <div role="alert" class="rounded-md border border-amber-200 bg-amber-50 text-amber-800 px-3 py-2 text-sm">You need admin access to manage engine families.</div>
+}
+else
+{
+    <div class="grid grid-cols-1 md:grid-cols-12 gap-3">
+        <!-- LEFT: list & search -->
+        <div class="md:col-span-5">
+            <div class="flex gap-2 mb-2">
+                <input class="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="Search code…" @bind="Q" @bind:event="oninput" />
+                <button class="inline-flex items-center rounded-md border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-indigo-500" @onclick="Load">Search</button>
+                <button class="inline-flex items-center rounded-md border border-emerald-300 bg-emerald-50 px-3 py-2 text-sm font-medium text-emerald-700 hover:bg-emerald-100 focus:outline-none focus:ring-2 focus:ring-emerald-500" @onclick="New">New</button>
+            </div>
+
+            @if (_loadingList)
+            {
+                <div class="px-3 py-2 text-sm text-gray-500">Loading…</div>
+            }
+            else
+            {
+                <div class="max-h-[65vh] overflow-auto space-y-2">
+                    @if (Rows.Count == 0)
+                    {
+                        <div class="px-3 py-2 text-sm text-gray-500">No engine families found.</div>
+                    }
+                    else
+                    {
+                        @foreach (var row in Rows)
+                        {
+                            var isActive = Editing?.EngineFamilyId == row.EngineFamilyId;
+                            <button class="w-full text-left rounded-md border px-3 py-2 transition @((isActive) ? "bg-indigo-600 text-white border-indigo-600" : "bg-white text-gray-900 hover:bg-gray-50 border-gray-200")" @onclick="() => Open(row.EngineFamilyId)">
+                                <div class="flex items-start justify-between">
+                                    <div>
+                                        <div class="font-semibold">@row.Code</div>
+                                        <div class="text-xs text-gray-500 @((isActive)?"text-indigo-100":"")">
+                                            @FormatRotor(row)
+                                            @if (!string.IsNullOrEmpty(FormatYears(row)))
+                                            {
+                                                <span> · @FormatYears(row)</span>
+                                            }
+                                        </div>
+                                    </div>
+                                    @if (!string.IsNullOrWhiteSpace(row.DefaultTreeName))
+                                    {
+                                        <span class="inline-flex items-center rounded-full bg-gray-100 text-gray-600 border border-gray-200 px-2 py-0.5 text-[11px]">@row.DefaultTreeName</span>
+                                    }
+                                </div>
+                            </button>
+                        }
+                    }
+                </div>
+            }
+        </div>
+
+        <!-- RIGHT: detail panel -->
+        <div class="md:col-span-7">
+            @if (!string.IsNullOrEmpty(Error))
+            {
+                <div role="alert" class="mb-2 rounded-md border border-amber-200 bg-amber-50 text-amber-800 px-3 py-2 text-sm">@Error</div>
+            }
+            @if (!string.IsNullOrEmpty(Info))
+            {
+                <div role="alert" class="mb-2 rounded-md border border-emerald-200 bg-emerald-50 text-emerald-800 px-3 py-2 text-sm">@Info</div>
+            }
+
+            @if (Editing is null)
+            {
+                <div class="text-sm text-gray-500">Select an engine family or click New.</div>
+            }
+            else
+            {
+                <div class="rounded-xl border border-gray-200 bg-white shadow-sm">
+                    <div class="p-4">
+                        <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+                            <div class="flex flex-col">
+                                <label class="text-sm font-medium text-gray-700">Code</label>
+                                <input class="mt-1 rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" @bind="Editing.Code" />
+                            </div>
+                            <div class="flex flex-col">
+                                <label class="text-sm font-medium text-gray-700">Rotors</label>
+                                <input type="number" class="mt-1 rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" @bind="Editing.RotorCount" />
+                            </div>
+                            <div class="flex flex-col">
+                                <label class="text-sm font-medium text-gray-700">Years</label>
+                                <div class="mt-1 flex gap-2">
+                                    <input type="number" class="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="Start" @bind="Editing.YearsStart" />
+                                    <input type="number" class="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="End" @bind="Editing.YearsEnd" />
+                                </div>
+                            </div>
+
+                            <div class="flex flex-col">
+                                <label class="text-sm font-medium text-gray-700">HP Min</label>
+                                <input type="number" class="mt-1 rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" @bind="Editing.HpMin" />
+                            </div>
+                            <div class="flex flex-col">
+                                <label class="text-sm font-medium text-gray-700">HP Max</label>
+                                <input type="number" class="mt-1 rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" @bind="Editing.HpMax" />
+                            </div>
+                            <div class="flex flex-col">
+                                <label class="text-sm font-medium text-gray-700">Induction</label>
+                                <select class="mt-1 rounded-md border border-gray-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" @bind="Editing.Induction">
+                                    <option value="">(none)</option>
+                                    @foreach (var option in _inductionOptions)
+                                    {
+                                        <option value="@option">@option</option>
+                                    }
+                                </select>
+                            </div>
+
+                            <div class="flex flex-col">
+                                <label class="text-sm font-medium text-gray-700">Injection</label>
+                                <select class="mt-1 rounded-md border border-gray-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" @bind="Editing.Injection">
+                                    <option value="">(none)</option>
+                                    @foreach (var option in _injectionOptions)
+                                    {
+                                        <option value="@option">@option</option>
+                                    }
+                                </select>
+                            </div>
+                            <div class="flex flex-col">
+                                <label class="text-sm font-medium text-gray-700">OMP Type</label>
+                                <select class="mt-1 rounded-md border border-gray-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" @bind="Editing.OmpType">
+                                    <option value="">(none)</option>
+                                    @foreach (var option in _ompOptions)
+                                    {
+                                        <option value="@option">@option</option>
+                                    }
+                                </select>
+                            </div>
+                            <div class="flex flex-col">
+                                <label class="text-sm font-medium text-gray-700">Ignition Layout</label>
+                                <select class="mt-1 rounded-md border border-gray-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" @bind="Editing.IgnitionLayout">
+                                    <option value="">(none)</option>
+                                    @foreach (var option in _ignitionOptions)
+                                    {
+                                        <option value="@option">@option</option>
+                                    }
+                                </select>
+                            </div>
+
+                            <div class="flex flex-col">
+                                <label class="text-sm font-medium text-gray-700">Intake Architecture</label>
+                                <select class="mt-1 rounded-md border border-gray-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" @bind="Editing.IntakeArch">
+                                    <option value="">(none)</option>
+                                    @foreach (var option in _intakeArchOptions)
+                                    {
+                                        <option value="@option">@option</option>
+                                    }
+                                </select>
+                            </div>
+                            <div class="flex flex-col">
+                                <label class="text-sm font-medium text-gray-700">Port Family</label>
+                                <select class="mt-1 rounded-md border border-gray-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" @bind="Editing.PortFamily">
+                                    <option value="">(none)</option>
+                                    @foreach (var option in _portFamilyOptions)
+                                    {
+                                        <option value="@option">@option</option>
+                                    }
+                                </select>
+                            </div>
+                            <div class="flex flex-col">
+                                <label class="text-sm font-medium text-gray-700">EGT Sensors</label>
+                                <input type="number" class="mt-1 rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" @bind="Editing.EgtSensors" />
+                            </div>
+
+                            <div class="flex flex-col">
+                                <label class="text-sm font-medium text-gray-700">O₂ Sensors</label>
+                                <input type="number" class="mt-1 rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" @bind="Editing.O2Sensors" />
+                            </div>
+                            <div class="flex flex-col">
+                                <label class="text-sm font-medium text-gray-700">ECU Type</label>
+                                <select class="mt-1 rounded-md border border-gray-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" @bind="Editing.EcuType">
+                                    <option value="">(none)</option>
+                                    @foreach (var option in _ecuOptions)
+                                    {
+                                        <option value="@option">@option</option>
+                                    }
+                                </select>
+                            </div>
+                            <div class="flex flex-col">
+                                <label class="text-sm font-medium text-gray-700">Turbo System</label>
+                                <select class="mt-1 rounded-md border border-gray-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" @bind="Editing.TurboSystem">
+                                    <option value="">(none)</option>
+                                    @foreach (var option in _turboSystemOptions)
+                                    {
+                                        <option value="@option">@option</option>
+                                    }
+                                </select>
+                            </div>
+
+                            <div class="flex flex-col">
+                                <label class="text-sm font-medium text-gray-700">Intercooler</label>
+                                <select class="mt-1 rounded-md border border-gray-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" value="@BoolToString(Editing.Intercooler)" @onchange="e => Editing.Intercooler = ParseNullableBool(e.Value?.ToString())">
+                                    <option value="">(unknown)</option>
+                                    <option value="true">true</option>
+                                    <option value="false">false</option>
+                                </select>
+                            </div>
+                            <div class="flex flex-col">
+                                <label class="text-sm font-medium text-gray-700">Apex Seal Thickness (mm)</label>
+                                <input type="number" step="0.01" class="mt-1 rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" @bind="Editing.ApexSealThicknessMm" />
+                            </div>
+                            <div class="flex flex-col">
+                                <label class="text-sm font-medium text-gray-700">Rotor Mass (g)</label>
+                                <input type="number" class="mt-1 rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" @bind="Editing.RotorMassG" />
+                            </div>
+
+                            <div class="flex flex-col">
+                                <label class="text-sm font-medium text-gray-700">Housing Step</label>
+                                <select class="mt-1 rounded-md border border-gray-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" @bind="Editing.HousingStep">
+                                    <option value="">(none)</option>
+                                    @foreach (var option in _housingStepOptions)
+                                    {
+                                        <option value="@option">@option</option>
+                                    }
+                                </select>
+                            </div>
+                            <div class="flex flex-col">
+                                <label class="text-sm font-medium text-gray-700">Exhaust Port Type</label>
+                                <select class="mt-1 rounded-md border border-gray-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" @bind="Editing.ExhaustPortType">
+                                    <option value="">(none)</option>
+                                    @foreach (var option in _exhaustPortOptions)
+                                    {
+                                        <option value="@option">@option</option>
+                                    }
+                                </select>
+                            </div>
+                            <div class="flex flex-col">
+                                <label class="text-sm font-medium text-gray-700">Emissions Package</label>
+                                <select class="mt-1 rounded-md border border-gray-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" @bind="Editing.EmissionsPkg">
+                                    <option value="">(none)</option>
+                                    @foreach (var option in _emissionsOptions)
+                                    {
+                                        <option value="@option">@option</option>
+                                    }
+                                </select>
+                            </div>
+
+                            <div class="flex flex-col">
+                                <label class="text-sm font-medium text-gray-700">Compression Min (psi)</label>
+                                <input type="number" class="mt-1 rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" @bind="Editing.CompressionMinPsi" />
+                            </div>
+                            <div class="flex flex-col">
+                                <label class="text-sm font-medium text-gray-700">Compression Max (psi)</label>
+                                <input type="number" class="mt-1 rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" @bind="Editing.CompressionMaxPsi" />
+                            </div>
+
+                            <div class="md:col-span-3 flex flex-col">
+                                <label class="text-sm font-medium text-gray-700">Notes</label>
+                                <textarea rows="3" class="mt-1 rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" @bind="Editing.Notes"></textarea>
+                            </div>
+
+                            <div class="md:col-span-3 flex flex-col">
+                                <label class="text-sm font-medium text-gray-700">Default Category Tree</label>
+                                <select class="mt-1 rounded-md border border-gray-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" @bind="DefaultTreeId">
+                                    <option value="">(none)</option>
+                                    @foreach (var tree in Trees)
+                                    {
+                                        <option value="@tree.TreeId">@tree.Name</option>
+                                    }
+                                </select>
+                            </div>
+
+                            @if (EditingMeta is not null)
+                            {
+                                <div class="md:col-span-3 text-xs text-gray-500">Updated @EditingMeta.UpdatedAt.ToLocalTime():g</div>
+                            }
+                        </div>
+
+                        <div class="mt-4">
+                            <h6 class="text-sm font-semibold text-gray-800">Attributes</h6>
+                            @if (!string.IsNullOrEmpty(AttrError))
+                            {
+                                <div role="alert" class="mt-2 rounded-md border border-amber-200 bg-amber-50 text-amber-800 px-2 py-1 text-xs">@AttrError</div>
+                            }
+                            <div class="mt-2 max-h-[260px] overflow-auto rounded-lg border border-gray-200">
+                                <table class="min-w-full text-sm">
+                                    <thead class="sticky top-0 bg-gray-50">
+                                        <tr>
+                                            <th class="px-3 py-2 text-left font-semibold text-gray-700">Code</th>
+                                            <th class="px-3 py-2 text-left font-semibold text-gray-700">Name</th>
+                                            <th class="px-3 py-2 text-left font-semibold text-gray-700">Type</th>
+                                            <th class="px-3 py-2 text-left font-semibold text-gray-700">Unit</th>
+                                            <th class="px-3 py-2 text-left font-semibold text-gray-700">Value</th>
+                                            <th class="px-3 py-2 text-right font-semibold text-gray-700">Actions</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody class="divide-y divide-gray-100">
+                                        @foreach (var attr in Attrs)
+                                        {
+                                            <tr>
+                                                <td class="px-3 py-2"><code class="rounded bg-gray-100 px-1 py-0.5 text-[11px]">@attr.Code</code></td>
+                                                <td class="px-3 py-2">@attr.Name</td>
+                                                <td class="px-3 py-2">@attr.DataType</td>
+                                                <td class="px-3 py-2">@attr.Unit</td>
+                                                <td class="px-3 py-2 min-w-[220px]">
+                                                    @switch (attr.DataType)
+                                                    {
+                                                        case "int":
+                                                            <input type="number" class="w-full rounded-md border border-gray-300 px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" value="@(attr.ValInt?.ToString() ?? string.Empty)" @onchange="e => SaveAttr(attr, e.Value?.ToString())" disabled="@SavingAttr" />
+                                                            break;
+                                                        case "decimal":
+                                                            <input type="number" step="0.000001" class="w-full rounded-md border border-gray-300 px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" value="@(attr.ValDecimal?.ToString(CultureInfo.InvariantCulture) ?? string.Empty)" @onchange="e => SaveAttr(attr, e.Value?.ToString())" disabled="@SavingAttr" />
+                                                            break;
+                                                        case "bool":
+                                                            <select class="w-full rounded-md border border-gray-300 bg-white px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" value="@BoolToString(attr.ValBool)" @onchange="e => SaveAttr(attr, e.Value?.ToString())" disabled="@SavingAttr">
+                                                                <option value=""></option>
+                                                                <option value="true">true</option>
+                                                                <option value="false">false</option>
+                                                            </select>
+                                                            break;
+                                                        default:
+                                                            <input class="w-full rounded-md border border-gray-300 px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" value="@attr.ValText" @onchange="e => SaveAttr(attr, e.Value?.ToString())" disabled="@SavingAttr" />
+                                                            break;
+                                                    }
+                                                </td>
+                                                <td class="px-3 py-2 text-right">
+                                                    <button class="inline-flex items-center rounded-md border border-gray-300 bg-white px-2.5 py-1 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50" @onclick="() => RemoveAttr(attr)" disabled="@SavingAttr">Clear</button>
+                                                </td>
+                                            </tr>
+                                        }
+                                        @if (Attrs.Count == 0)
+                                        {
+                                            <tr>
+                                                <td colspan="6" class="px-3 py-6 text-center text-sm text-gray-500">No attributes defined yet.</td>
+                                            </tr>
+                                        }
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+
+                        <div class="mt-4 flex gap-2">
+                            <button class="inline-flex items-center rounded-md bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-50" @onclick="Save" disabled="@Busy">@(Busy ? "Saving…" : "Save")</button>
+                            @if (Editing.EngineFamilyId > 0)
+                            {
+                                <button class="inline-flex items-center rounded-md border border-red-300 bg-white px-4 py-2 text-sm font-semibold text-red-700 hover:bg-red-50 focus:outline-none focus:ring-2 focus:ring-red-500 disabled:opacity-50" @onclick="Delete" disabled="@Busy">Delete</button>
+                            }
+                        </div>
+                    </div>
+                </div>
+            }
+        </div>
+    </div>
+}
+
+@code {
+    // (C# code block unchanged from your original; only class names/markup were converted to Tailwind.)
+    record EngineRow
+    {
+        [JsonPropertyName("engine_family_id")] public long EngineFamilyId { get; init; }
+        [JsonPropertyName("code")] public string Code { get; init; } = string.Empty;
+        [JsonPropertyName("rotor_count")] public int? RotorCount { get; init; }
+        [JsonPropertyName("years_start")] public int? YearsStart { get; init; }
+        [JsonPropertyName("years_end")] public int? YearsEnd { get; init; }
+        [JsonPropertyName("hp_min")] public int? HpMin { get; init; }
+        [JsonPropertyName("hp_max")] public int? HpMax { get; init; }
+        [JsonPropertyName("induction")] public string? Induction { get; init; }
+        [JsonPropertyName("injection")] public string? Injection { get; init; }
+        [JsonPropertyName("omp_type")] public string? OmpType { get; init; }
+        [JsonPropertyName("ignition_layout")] public string? IgnitionLayout { get; init; }
+        [JsonPropertyName("intake_arch")] public string? IntakeArch { get; init; }
+        [JsonPropertyName("port_family")] public string? PortFamily { get; init; }
+        [JsonPropertyName("egt_sensors")] public int? EgtSensors { get; init; }
+        [JsonPropertyName("o2_sensors")] public int? O2Sensors { get; init; }
+        [JsonPropertyName("ecu_type")] public string? EcuType { get; init; }
+        [JsonPropertyName("turbo_system")] public string? TurboSystem { get; init; }
+        [JsonPropertyName("intercooler")] public bool? Intercooler { get; init; }
+        [JsonPropertyName("apex_seal_thickness_mm")] public decimal? ApexSealThicknessMm { get; init; }
+        [JsonPropertyName("rotor_mass_g")] public int? RotorMassG { get; init; }
+        [JsonPropertyName("housing_step")] public string? HousingStep { get; init; }
+        [JsonPropertyName("exhaust_port_type")] public string? ExhaustPortType { get; init; }
+        [JsonPropertyName("emissions_pkg")] public string? EmissionsPkg { get; init; }
+        [JsonPropertyName("compression_min_psi")] public int? CompressionMinPsi { get; init; }
+        [JsonPropertyName("compression_max_psi")] public int? CompressionMaxPsi { get; init; }
+        [JsonPropertyName("notes")] public string? Notes { get; init; }
+        [JsonPropertyName("created_at")] public DateTime CreatedAt { get; init; }
+        [JsonPropertyName("updated_at")] public DateTime UpdatedAt { get; init; }
+        [JsonPropertyName("default_tree_id")] public long? DefaultTreeId { get; init; }
+        [JsonPropertyName("default_tree_name")] public string? DefaultTreeName { get; init; }
+    }
+
+    record TreeVm
+    {
+        [JsonPropertyName("tree_id")] public long TreeId { get; init; }
+        [JsonPropertyName("name")] public string Name { get; init; } = string.Empty;
+    }
+
+    class EngineFamiliesResponse
+    {
+        [JsonPropertyName("rows")] public List<EngineRow> Rows { get; set; } = new();
+        [JsonPropertyName("total")] public int Total { get; set; }
+        [JsonPropertyName("page")] public int Page { get; set; }
+        [JsonPropertyName("pageSize")] public int PageSize { get; set; }
+    }
+
+    class EngineEditVm
+    {
+        public long EngineFamilyId { get; set; }
+        public string Code { get; set; } = string.Empty;
+        public int? RotorCount { get; set; }
+        public int? YearsStart { get; set; }
+        public int? YearsEnd { get; set; }
+        public int? HpMin { get; set; }
+        public int? HpMax { get; set; }
+        public string? Induction { get; set; }
+        public string? Injection { get; set; }
+        public string? OmpType { get; set; }
+        public string? IgnitionLayout { get; set; }
+        public string? IntakeArch { get; set; }
+        public string? PortFamily { get; set; }
+        public int? EgtSensors { get; set; }
+        public int? O2Sensors { get; set; }
+        public string? EcuType { get; set; }
+        public string? TurboSystem { get; set; }
+        public bool? Intercooler { get; set; }
+        public decimal? ApexSealThicknessMm { get; set; }
+        public int? RotorMassG { get; set; }
+        public string? HousingStep { get; set; }
+        public string? ExhaustPortType { get; set; }
+        public string? EmissionsPkg { get; set; }
+        public int? CompressionMinPsi { get; set; }
+        public int? CompressionMaxPsi { get; set; }
+        public string? Notes { get; set; }
+    }
+
+    readonly string[] _inductionOptions = { "NA", "Turbo", "TwinTurboSeq", "Supercharged" };
+    readonly string[] _injectionOptions = { "Carb", "TBI", "EFI" };
+    readonly string[] _ompOptions = { "None", "Mechanical", "Electric" };
+    readonly string[] _ignitionOptions = { "LeadingTrailing", "CoilOnPlug", "Distributor" };
+    readonly string[] _intakeArchOptions = { "4-Port", "6-Port", "Bridge", "Peripheral" };
+    readonly string[] _portFamilyOptions = { "Side", "Peripheral", "Mixed" };
+    readonly string[] _ecuOptions = { "OEM", "Aftermarket", "None" };
+    readonly string[] _turboSystemOptions = { "None", "Single", "SequentialTwin", "ParallelTwin" };
+    readonly string[] _housingStepOptions = { "Standard", "RX8_RENESIS", "Ceramic", "Aftermarket_Coated" };
+    readonly string[] _exhaustPortOptions = { "Side", "Peripheral" };
+    readonly string[] _emissionsOptions = { "None", "JDM", "USDM", "Euro" };
+
+    record AttrVM
+    {
+        [JsonPropertyName("engine_attr_id")] public long EngineAttrId { get; init; }
+        [JsonPropertyName("code")] public string Code { get; init; } = string.Empty;
+        [JsonPropertyName("name")] public string Name { get; init; } = string.Empty;
+        [JsonPropertyName("data_type")] public string DataType { get; init; } = string.Empty;
+        [JsonPropertyName("unit")] public string? Unit { get; init; }
+        [JsonPropertyName("val_int")] public long? ValInt { get; init; }
+        [JsonPropertyName("val_decimal")] public decimal? ValDecimal { get; init; }
+        [JsonPropertyName("val_bool")] public bool? ValBool { get; init; }
+        [JsonPropertyName("val_text")] public string? ValText { get; init; }
+    }
+
+    string Q { get; set; } = string.Empty;
+    bool Busy;
+    bool _loadingList;
+    string? Error;
+    string? Info;
+    List<EngineRow> Rows { get; set; } = new();
+    List<TreeVm> Trees { get; set; } = new();
+    EngineEditVm? Editing;
+    EngineRow? EditingMeta;
+    string? DefaultTreeId;
+    List<AttrVM> Attrs { get; set; } = new();
+    string? AttrError;
+    bool SavingAttr;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await Session.HydrateAsync();
+        if (!Session.IsAdmin)
+        {
+            return;
+        }
+
+        await Load();
+        await LoadTreesAsync();
+    }
+
+    async Task Load()
+    {
+        if (!Session.IsAdmin) return;
+        _loadingList = true;
+        Error = null;
+        await InvokeAsync(StateHasChanged);
+
+        try
+        {
+            var url = string.IsNullOrWhiteSpace(Q)
+                ? "/api/admin/engine-families"
+                : $"/api/admin/engine-families?q={Uri.EscapeDataString(Q)}";
+            using var response = await Http.GetAsync(url);
+            if (!response.IsSuccessStatusCode)
+            {
+                Error = $"Failed to load engine families ({response.StatusCode}).";
+                Rows = new();
+                return;
+            }
+
+            var payload = await response.Content.ReadFromJsonAsync<EngineFamiliesResponse>();
+            Rows = payload?.Rows ?? new();
+            TrimSelectedIfMissing();
+        }
+        catch (Exception ex)
+        {
+            Error = $"Failed to load engine families: {ex.Message}";
+            Rows = new();
+        }
+        finally
+        {
+            _loadingList = false;
+        }
+    }
+
+    async Task LoadTreesAsync()
+    {
+        try
+        {
+            Trees = await Http.GetFromJsonAsync<List<TreeVm>>("/api/category-trees") ?? new();
+        }
+        catch (Exception ex)
+        {
+            Error = string.IsNullOrEmpty(Error)
+                ? $"Failed to load category trees: {ex.Message}"
+                : Error;
+        }
+    }
+
+    async Task LoadAttrs(long engineId)
+    {
+        if (!Session.IsAdmin) return;
+        try
+        {
+            AttrError = null;
+            Attrs = await Http.GetFromJsonAsync<List<AttrVM>>($"/api/admin/engine-families/{engineId}/attrs") ?? new();
+        }
+        catch (Exception ex)
+        {
+            AttrError = $"Failed to load attributes: {ex.Message}";
+            Attrs = new();
+        }
+        await InvokeAsync(StateHasChanged);
+    }
+
+    async Task SaveAttr(AttrVM attr, string? rawValue)
+    {
+        if (!Session.IsAdmin || Editing is null) return;
+
+        if (string.IsNullOrWhiteSpace(rawValue))
+        {
+            await RemoveAttr(attr);
+            return;
+        }
+
+        object? value;
+        try
+        {
+            value = attr.DataType switch
+            {
+                "int" => long.TryParse(rawValue, NumberStyles.Integer, CultureInfo.InvariantCulture, out var intVal)
+                    ? intVal
+                    : throw new FormatException("Invalid integer."),
+                "decimal" => decimal.TryParse(rawValue, NumberStyles.Float, CultureInfo.InvariantCulture, out var decVal)
+                    ? decVal
+                    : throw new FormatException("Invalid decimal."),
+                "bool" => TryParseBool(rawValue, out var boolVal)
+                    ? boolVal
+                    : throw new FormatException("Invalid boolean."),
+                _ => rawValue
+            };
+        }
+        catch (FormatException ex)
+        {
+            AttrError = ex.Message;
+            StateHasChanged();
+            return;
+        }
+
+        try
+        {
+            SavingAttr = true;
+            AttrError = null;
+            StateHasChanged();
+
+            var resp = await Http.PostAsJsonAsync($"/api/admin/engine-families/{Editing.EngineFamilyId}/attrs", new { code = attr.Code, value });
+            if (!resp.IsSuccessStatusCode)
+            {
+                AttrError = await ExtractErrorAsync(resp);
+                return;
+            }
+
+            await LoadAttrs(Editing.EngineFamilyId);
+        }
+        catch (Exception ex)
+        {
+            AttrError = ex.Message;
+        }
+        finally
+        {
+            SavingAttr = false;
+            StateHasChanged();
+        }
+    }
+
+    async Task RemoveAttr(AttrVM attr)
+    {
+        if (!Session.IsAdmin || Editing is null) return;
+
+        try
+        {
+            SavingAttr = true;
+            AttrError = null;
+            StateHasChanged();
+
+            var resp = await Http.DeleteAsync($"/api/admin/engine-families/{Editing.EngineFamilyId}/attrs/{attr.Code}");
+            if (!resp.IsSuccessStatusCode)
+            {
+                AttrError = await ExtractErrorAsync(resp);
+                return;
+            }
+
+            await LoadAttrs(Editing.EngineFamilyId);
+        }
+        catch (Exception ex)
+        {
+            AttrError = ex.Message;
+        }
+        finally
+        {
+            SavingAttr = false;
+            StateHasChanged();
+        }
+    }
+
+    void New()
+    {
+        Error = null;
+        Info = null;
+        Editing = new EngineEditVm();
+        EditingMeta = null;
+        DefaultTreeId = null;
+        Attrs = new();
+        AttrError = null;
+    }
+
+    async Task Open(long id)
+    {
+        if (!Session.IsAdmin) return;
+        Error = null;
+        Info = null;
+        try
+        {
+            var detail = await Http.GetFromJsonAsync<EngineRow>($"/api/admin/engine-families/{id}");
+            if (detail is null)
+            {
+                Error = "Engine family not found.";
+                return;
+            }
+
+            Editing = new EngineEditVm
+            {
+                EngineFamilyId = detail.EngineFamilyId,
+                Code = detail.Code,
+                RotorCount = detail.RotorCount,
+                YearsStart = detail.YearsStart,
+                YearsEnd = detail.YearsEnd,
+                HpMin = detail.HpMin,
+                HpMax = detail.HpMax,
+                Induction = detail.Induction,
+                Injection = detail.Injection,
+                OmpType = detail.OmpType,
+                IgnitionLayout = detail.IgnitionLayout,
+                IntakeArch = detail.IntakeArch,
+                PortFamily = detail.PortFamily,
+                EgtSensors = detail.EgtSensors,
+                O2Sensors = detail.O2Sensors,
+                EcuType = detail.EcuType,
+                TurboSystem = detail.TurboSystem,
+                Intercooler = detail.Intercooler,
+                ApexSealThicknessMm = detail.ApexSealThicknessMm,
+                RotorMassG = detail.RotorMassG,
+                HousingStep = detail.HousingStep,
+                ExhaustPortType = detail.ExhaustPortType,
+                EmissionsPkg = detail.EmissionsPkg,
+                CompressionMinPsi = detail.CompressionMinPsi,
+                CompressionMaxPsi = detail.CompressionMaxPsi,
+                Notes = detail.Notes
+            };
+            EditingMeta = detail;
+            DefaultTreeId = detail.DefaultTreeId?.ToString();
+            await LoadAttrs(detail.EngineFamilyId);
+        }
+        catch (Exception ex)
+        {
+            Error = $"Failed to load engine family: {ex.Message}";
+        }
+    }
+
+    async Task Save()
+    {
+        if (Editing is null || !Session.IsAdmin) return;
+        Busy = true;
+        Error = null;
+        Info = null;
+
+        try
+        {
+            var payload = new
+            {
+                code = Editing.Code,
+                rotor_count = Editing.RotorCount,
+                years_start = Editing.YearsStart,
+                years_end = Editing.YearsEnd,
+                hp_min = Editing.HpMin,
+                hp_max = Editing.HpMax,
+                induction = Editing.Induction,
+                injection = Editing.Injection,
+                omp_type = Editing.OmpType,
+                ignition_layout = Editing.IgnitionLayout,
+                intake_arch = Editing.IntakeArch,
+                port_family = Editing.PortFamily,
+                egt_sensors = Editing.EgtSensors,
+                o2_sensors = Editing.O2Sensors,
+                ecu_type = Editing.EcuType,
+                turbo_system = Editing.TurboSystem,
+                intercooler = Editing.Intercooler,
+                apex_seal_thickness_mm = Editing.ApexSealThicknessMm,
+                rotor_mass_g = Editing.RotorMassG,
+                housing_step = Editing.HousingStep,
+                exhaust_port_type = Editing.ExhaustPortType,
+                emissions_pkg = Editing.EmissionsPkg,
+                compression_min_psi = Editing.CompressionMinPsi,
+                compression_max_psi = Editing.CompressionMaxPsi,
+                notes = Editing.Notes,
+                default_tree_id = ParseTreeId(DefaultTreeId)
+            };
+
+            if (Editing.EngineFamilyId == 0)
+            {
+                using var response = await Http.PostAsJsonAsync("/api/admin/engine-families", payload);
+                if (!response.IsSuccessStatusCode)
+                {
+                    Error = await ExtractErrorAsync(response);
+                    return;
+                }
+
+                var created = await response.Content.ReadFromJsonAsync<JsonElement?>();
+                await Load();
+                if (created.HasValue && created.Value.TryGetProperty("engine_family_id", out var idProp) && idProp.TryGetInt64(out var newId))
+                {
+                    await Open(newId);
+                }
+                Info = "Created.";
+            }
+            else
+            {
+                using var response = await Http.PatchAsJsonAsync($"/api/admin/engine-families/{Editing.EngineFamilyId}", payload);
+                if (!response.IsSuccessStatusCode)
+                {
+                    Error = await ExtractErrorAsync(response);
+                    return;
+                }
+
+                var currentId = Editing.EngineFamilyId;
+                await Load();
+                await Open(currentId);
+                Info = "Saved.";
+            }
+        }
+        catch (Exception ex)
+        {
+            Error = ex.Message;
+        }
+        finally
+        {
+            Busy = false;
+        }
+    }
+
+    async Task Delete()
+    {
+        if (Editing is null || Editing.EngineFamilyId == 0 || !Session.IsAdmin) return;
+        Busy = true;
+        Error = null;
+        Info = null;
+
+        try
+        {
+            using var response = await Http.DeleteAsync($"/api/admin/engine-families/{Editing.EngineFamilyId}");
+            if (!response.IsSuccessStatusCode)
+            {
+                Error = await ExtractErrorAsync(response);
+                return;
+            }
+
+            Info = "Deleted.";
+            Editing = null;
+            EditingMeta = null;
+            DefaultTreeId = null;
+            Attrs = new();
+            AttrError = null;
+            await Load();
+        }
+        catch (Exception ex)
+        {
+            Error = ex.Message;
+        }
+        finally
+        {
+            Busy = false;
+        }
+    }
+
+    long? ParseTreeId(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return null;
+        return long.TryParse(value, out var parsed) ? parsed : null;
+    }
+
+    void TrimSelectedIfMissing()
+    {
+        if (Editing is null) return;
+        if (!Rows.Any(r => r.EngineFamilyId == Editing.EngineFamilyId))
+        {
+            Editing = null;
+            EditingMeta = null;
+            DefaultTreeId = null;
+            Attrs = new();
+            AttrError = null;
+        }
+    }
+
+    string FormatRotor(EngineRow row)
+    {
+        return row.RotorCount.HasValue ? $"{row.RotorCount} rotors" : "Rotors: —";
+    }
+
+    string FormatYears(EngineRow row)
+    {
+        if (!row.YearsStart.HasValue && !row.YearsEnd.HasValue) return string.Empty;
+        var start = row.YearsStart?.ToString() ?? "?";
+        var end = row.YearsEnd?.ToString() ?? "?";
+        return $"{start}-{end}";
+    }
+
+    static string BoolToString(bool? value) => value switch
+    {
+        true => "true",
+        false => "false",
+        _ => string.Empty
+    };
+
+    static bool TryParseBool(string? value, out bool result)
+    {
+        result = false;
+        if (string.IsNullOrWhiteSpace(value))
+            return false;
+
+        if (value.Equals("true", StringComparison.OrdinalIgnoreCase) || value == "1")
+        {
+            result = true;
+            return true;
+        }
+
+        if (value.Equals("false", StringComparison.OrdinalIgnoreCase) || value == "0")
+        {
+            result = false;
+            return true;
+        }
+
+        return false;
+    }
+
+    static bool? ParseNullableBool(string? value)
+    {
+        return TryParseBool(value, out var result) ? result : null;
+    }
+
+    static async Task<string> ExtractErrorAsync(HttpResponseMessage response)
+    {
+        var body = await response.Content.ReadAsStringAsync();
+        if (string.IsNullOrWhiteSpace(body))
+        {
+            return $"Request failed ({response.StatusCode}).";
+        }
+
+        try
+        {
+            using var doc = JsonDocument.Parse(body);
+            if (doc.RootElement.ValueKind == JsonValueKind.Object)
+            {
+                if (doc.RootElement.TryGetProperty("message", out var message) && message.ValueKind == JsonValueKind.String)
+                {
+                    return message.GetString() ?? body;
+                }
+                if (doc.RootElement.TryGetProperty("error", out var error) && error.ValueKind == JsonValueKind.String)
+                {
+                    return error.GetString() ?? body;
+                }
+            }
+        }
+        catch (JsonException)
+        {
+        }
+
+        return body;
+    }
+}

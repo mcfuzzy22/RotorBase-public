@@ -1,0 +1,706 @@
+@page "/bundles/{Id:long}"
+@rendermode InteractiveServer
+@using System.Globalization
+@using System.Net
+@using System.Text.Json
+@using Microsoft.AspNetCore.WebUtilities
+@inject HttpClient Http
+@inject NavigationManager Nav
+@inject CompareTrayService Compare
+@inject UserSession Session
+@inject ToastService Toasts
+<PageTitle>@(Data?.part?.name ?? "Bundle")</PageTitle>
+
+@if (IsLoading)
+{
+    <div class="container py-10">
+        <div class="card flex items-center gap-3 px-4 py-6">
+            <svg class="h-5 w-5 animate-spin" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4A4 4 0 004 12z"></path>
+            </svg>
+            <span>Loading…</span>
+        </div>
+    </div>
+}
+else if (!string.IsNullOrEmpty(ErrorMessage))
+{
+    <div class="container py-10">
+        <div class="card px-4 py-3 ring-1 ring-danger/25 bg-danger/5 text-danger">@ErrorMessage</div>
+    </div>
+}
+else if (Data is null)
+{
+    <div class="container py-10">
+        <div class="card px-4 py-3 ring-1 ring-warning/25 bg-warning/5 text-warning">Bundle not found.</div>
+    </div>
+}
+else
+{
+    <div class="relative min-h-[calc(100vh-4rem)] bg-background text-foreground">
+        <div aria-hidden="true" class="pointer-events-none absolute inset-x-0 top-0 h-32 bg-grid opacity-[.12]"></div>
+
+        <section class="container relative z-10 py-6">
+            <div class="mb-5 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                <div>
+                    <div class="text-sm text-foreground/60">@Data.part?.brand_name</div>
+                    <h1 class="text-2xl font-bold tracking-tight md:text-3xl">@Data.part?.name</h1>
+                    <div class="text-sm text-foreground/60">@Data.part?.sku</div>
+                </div>
+                <div class="flex flex-wrap gap-2">
+                    <button class="btn btn-ghost" @onclick="AddToCompare">Add to compare</button>
+                    <a class="btn btn-ghost" href="/bundles">Back to bundles</a>
+                </div>
+            </div>
+
+            <div class="grid gap-6 lg:grid-cols-3">
+                <div class="lg:col-span-2">
+                    <div class="card overflow-hidden p-0">
+                        <div class="border-b border-border/60 px-4 py-3">
+                            <h2 class="text-base font-semibold">Bill of materials</h2>
+                        </div>
+
+                        @if (Data.components.Count == 0)
+                        {
+                            <div class="px-4 py-4 text-sm text-foreground/70">No component breakdown available.</div>
+                        }
+                        else
+                        {
+                            <div class="overflow-x-auto">
+                                <table class="table">
+                                    <thead>
+                                        <tr>
+                                            <th>Part</th>
+                                            <th class="text-center">Qty</th>
+                                            <th class="text-right">Best price</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody class="[&>tr:nth-child(odd)]:bg-muted/40">
+                                        @foreach (var component in Data.components)
+                                        {
+                                            <tr>
+                                                <td class="align-top">
+                                                    <div class="font-medium">@component.name</div>
+                                                    <div class="text-xs text-foreground/60">@component.sku</div>
+                                                </td>
+                                                <td class="text-center tabular-nums">@component.qty_per_parent</td>
+                                                <td class="text-right tabular-nums">@FormatPrice(component.best_price)</td>
+                                            </tr>
+                                        }
+                                    </tbody>
+                                    <tfoot>
+                                        <tr>
+                                            <th colspan="2">Component total</th>
+                                            <th class="text-right tabular-nums">@FormatPrice(ComponentsTotal)</th>
+                                        </tr>
+                                    </tfoot>
+                                </table>
+                            </div>
+                        }
+                    </div>
+                </div>
+
+                <aside class="lg:col-span-1">
+                    <div class="card overflow-hidden p-0 lg:sticky lg:top-24">
+                        <div class="border-b border-border/60 px-4 py-3">
+                            <h2 class="text-base font-semibold">Buy this kit</h2>
+                        </div>
+
+                        <div class="space-y-4 p-4">
+                            @if (BestOffering is not null)
+                            {
+                                <div class="flex items-baseline justify-between">
+                                    <div>
+                                        <div class="text-sm font-medium">Best offer</div>
+                                        <div class="text-xs text-foreground/60">@BestOffering.vendor</div>
+                                    </div>
+                                    <div class="text-lg font-semibold tabular-nums">@FormatPrice(BestOffering.price)</div>
+                                </div>
+                            }
+                            else
+                            {
+                                <div class="text-sm text-foreground/70">No live offerings available.</div>
+                            }
+
+                            @if (Data.offerings.Count > 0)
+                            {
+                                <div>
+                                    <h3 class="mb-2 text-sm font-semibold">Vendors</h3>
+                                    <ul class="divide-y divide-border/60">
+                                        @foreach (var offer in Data.offerings)
+                                        {
+                                            var link = offer.affiliate_url ?? offer.url;
+                                            <li class="flex items-center justify-between py-2">
+                                                <div>
+                                                    <div class="text-sm font-medium">@offer.vendor</div>
+                                                    <div class="text-xs text-foreground/60">@offer.currency @offer.price</div>
+                                                </div>
+                                                @if (!string.IsNullOrWhiteSpace(link))
+                                                {
+                                                    <a class="btn btn-soft h-8 px-3" href="@link" target="_blank" rel="noopener">Buy</a>
+                                                }
+                                                else
+                                                {
+                                                    <span class="text-xs text-foreground/60">No link</span>
+                                                }
+                                            </li>
+                                        }
+                                    </ul>
+                                </div>
+                            }
+
+                            <div class="pt-2">
+                                <button class="btn btn-primary w-full"
+                                        @onclick="AddKitToBuild" disabled="@DirectAddBusy">
+                                    @(DirectAddBusy ? "Adding…" : "Add kit to build")
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </aside>
+            </div>
+
+            @if (!string.IsNullOrEmpty(Toast))
+            {
+                <div class="mt-6 card px-4 py-3 ring-1 ring-info/25 bg-info/5 text-info">@Toast</div>
+            }
+        </section>
+    </div>
+}
+
+@if (ShowBuildPicker)
+{
+    <div class="fixed inset-0 z-40 bg-background/60 backdrop-blur-sm"></div>
+    <div class="fixed inset-0 z-50 grid place-items-center p-4">
+        <div class="card w-full max-w-md overflow-hidden">
+            <div class="flex items-center justify-between border-b border-border/60 px-4 py-3">
+                <h5 class="text-base font-semibold">Add kit to build</h5>
+                <button type="button" class="btn btn-ghost h-8 px-2"
+                        aria-label="Close" @onclick="CloseBuildPicker" disabled="@BuildPickerSubmitting">✕</button>
+            </div>
+
+            <div class="space-y-3 p-4">
+                @if (BuildPickerLoading)
+                {
+                    <div class="flex items-center gap-2 text-sm">
+                        <svg class="h-4 w-4 animate-spin" viewBox="0 0 24 24">
+                            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4A4 4 0 004 12z"></path>
+                        </svg>
+                        <span>Loading…</span>
+                    </div>
+                }
+                else if (BuildPickerError is not null)
+                {
+                    <div class="card px-3 py-2 ring-1 ring-danger/25 bg-danger/5 text-danger" role="alert">@BuildPickerError</div>
+                }
+                else if (PendingSelection is not null)
+                {
+                    <div>
+                        <label class="label">Build</label>
+                        <select class="input" @bind="SelectedBuildId">
+                            @foreach (var build in BuildOptions)
+                            {
+                                <option value="@build.BuildId">@build.Name</option>
+                            }
+                        </select>
+                    </div>
+
+                    @if (PendingSelection.Categories.Count > 0)
+                    {
+                        <div>
+                            <label class="label">Category</label>
+                            <select class="input" @bind="SelectedCategoryId">
+                                @foreach (var cat in PendingSelection.Categories)
+                                {
+                                    <option value="@cat.CategoryId">@cat.Name</option>
+                                }
+                            </select>
+                        </div>
+                    }
+                    else
+                    {
+                        <div class="card px-3 py-2 text-sm ring-1 ring-info/25 bg-info/5 text-info" role="alert">
+                            This kit will use its primary category automatically.
+                        </div>
+                    }
+
+                    <div class="text-sm"><strong>Kit:</strong> @PendingSelection.PartName</div>
+                }
+            </div>
+
+            <div class="flex justify-end gap-2 border-t border-border/60 px-4 py-3">
+                <button class="btn btn-ghost"
+                        @onclick="CloseBuildPicker" disabled="@BuildPickerSubmitting">Cancel</button>
+                <button class="btn btn-primary"
+                        @onclick="SubmitAddToBuildAsync"
+                        disabled="@(BuildPickerSubmitting || BuildPickerLoading || PendingSelection is null)">
+                    @(BuildPickerSubmitting ? "Adding…" : "Add")
+                </button>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter] public long Id { get; set; }
+
+    private BundleDetailResponse? Data;
+    private bool IsLoading = true;
+    private string? ErrorMessage;
+    private string? Toast;
+    private List<BuildSummaryDto> BuildOptions { get; } = new();
+    private bool BuildOptionsLoaded;
+    private bool BuildOptionsLoading;
+    private bool ShowBuildPicker;
+    private bool BuildPickerLoading;
+    private bool BuildPickerSubmitting;
+    private string? BuildPickerError;
+    private BuildSelectionContext? PendingSelection;
+    private long? SelectedBuildId;
+    private long? SelectedCategoryId;
+    private long? BuildIdFromQuery;
+    private bool DirectAddBusy;
+
+    private decimal? ComponentsTotal => Data?.components
+        .Where(c => c.best_price.HasValue)
+        .Sum(c => c.best_price!.Value * c.qty_per_parent);
+
+    private OfferingDto? BestOffering => Data?.offerings is { Count: > 0 } offers
+        ? offers.OrderBy(o => o.price).FirstOrDefault()
+        : null;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await Compare.InitializeAsync();
+        try
+        {
+            await Session.HydrateAsync();
+        }
+        catch
+        {
+            // Hydration can fail if we are not in an interactive context yet – safe to ignore.
+        }
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        CaptureBuildContextFromQuery();
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        IsLoading = true;
+        ErrorMessage = null;
+        Toast = null;
+
+        try
+        {
+            Data = await Http.GetFromJsonAsync<BundleDetailResponse>($"/api/bundles/{Id}");
+            if (Data is null)
+            {
+                ErrorMessage = "Bundle not found.";
+            }
+        }
+        catch (HttpRequestException ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound)
+        {
+            ErrorMessage = "Bundle not found.";
+        }
+        catch (HttpRequestException ex)
+        {
+            ErrorMessage = $"Server error: {ex.Message}";
+        }
+        catch (Exception ex)
+        {
+            ErrorMessage = ex.Message;
+        }
+        finally
+        {
+            IsLoading = false;
+        }
+    }
+
+    private async Task AddToCompare()
+    {
+        if (Data?.part?.sku is null)
+        {
+            Toast = "Part not available.";
+            return;
+        }
+
+        var sku = Data.part.sku;
+        Toast = null;
+        var added = await Compare.AddAsync(sku);
+        Toasts.Show(added ? $"Added {sku} to compare." : $"{sku} is already in compare.",
+            added ? ToastKind.Success : ToastKind.Info);
+    }
+
+    private async Task AddKitToBuild()
+    {
+        if (DirectAddBusy)
+            return;
+
+        Toast = null;
+        BuildPickerError = null;
+
+        if (Data?.part is null)
+            return;
+
+        DirectAddBusy = true;
+        StateHasChanged();
+
+        try
+        {
+            await HydrateSessionSafeAsync();
+
+            if (!Session.IsSignedIn)
+            {
+                Toast = "Sign in to add kits to a build.";
+                RedirectToSignIn();
+                return;
+            }
+
+            var part = Data.part;
+
+            if (BuildIdFromQuery.HasValue)
+            {
+                var directResult = await TryAddKitAsync(BuildIdFromQuery.Value, part.part_id, null);
+                if (directResult.Success)
+                {
+                    var display = part.name ?? part.sku ?? "kit";
+                    Toast = $"Added {display} to build.";
+                    return;
+                }
+
+                if (directResult.StatusCode == HttpStatusCode.Unauthorized)
+                {
+                    Toast = directResult.ErrorMessage ?? "Sign in to add kits to a build.";
+                    RedirectToSignIn();
+                    return;
+                }
+
+                if (directResult.StatusCode == HttpStatusCode.Forbidden || directResult.StatusCode == HttpStatusCode.NotFound)
+                {
+                    Toast = directResult.ErrorMessage ?? "We could not add this kit to that build. Choose another build.";
+                    BuildIdFromQuery = null;
+                }
+                else
+                {
+                    Toast = directResult.ErrorMessage ?? "Unable to add kit to build.";
+                    return;
+                }
+            }
+
+            var optionsReady = await EnsureBuildOptionsAsync();
+            if (!optionsReady)
+            {
+                Toast = BuildPickerError ?? "Unable to load your builds right now.";
+                BuildPickerError = null;
+                return;
+            }
+
+            if (BuildOptions.Count == 0)
+            {
+                Toast = "Create a build first to add kits.";
+                return;
+            }
+
+            BuildPickerLoading = true;
+            BuildPickerSubmitting = false;
+            BuildPickerError = null;
+            ShowBuildPicker = true;
+            PendingSelection = null;
+            SelectedCategoryId = null;
+
+            try
+            {
+                var key = !string.IsNullOrWhiteSpace(part.sku)
+                    ? part.sku!
+                    : part.part_id.ToString(CultureInfo.InvariantCulture);
+
+                var detail = await Http.GetFromJsonAsync<ShopPartMeta>($"/api/shop/parts/{key}");
+                if (detail is null)
+                {
+                    BuildPickerError = "Unable to load kit metadata.";
+                    return;
+                }
+
+                var categories = detail.Categories ?? new List<CategorySummary>();
+
+                var ordered = categories
+                    .OrderByDescending(c => c.IsPrimary)
+                    .ThenBy(c => c.Name)
+                    .ToList();
+
+                var partName = detail.Part?.Name ?? part.name ?? key;
+                PendingSelection = new BuildSelectionContext(part.part_id, partName, ordered);
+                SelectedCategoryId = ordered.FirstOrDefault()?.CategoryId;
+
+                if (BuildIdFromQuery.HasValue && BuildOptions.Any(b => b.BuildId == BuildIdFromQuery.Value))
+                {
+                    SelectedBuildId = BuildIdFromQuery;
+                }
+                else
+                {
+                    SelectedBuildId ??= BuildOptions.FirstOrDefault()?.BuildId;
+                }
+            }
+            catch (HttpRequestException ex) when (ex.StatusCode == HttpStatusCode.NotFound)
+            {
+                BuildPickerError = "Kit record not found.";
+            }
+            catch (Exception ex)
+            {
+                BuildPickerError = ex.Message;
+            }
+            finally
+            {
+                BuildPickerLoading = false;
+                StateHasChanged();
+            }
+        }
+        finally
+        {
+            DirectAddBusy = false;
+            StateHasChanged();
+        }
+    }
+
+    private void CaptureBuildContextFromQuery()
+    {
+        try
+        {
+            var uri = Nav.ToAbsoluteUri(Nav.Uri);
+            BuildIdFromQuery = null;
+            if (string.IsNullOrEmpty(uri.Query))
+                return;
+
+            var query = QueryHelpers.ParseQuery(uri.Query);
+            if (query.TryGetValue("buildId", out var buildValue) &&
+                long.TryParse(buildValue.ToString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed) &&
+                parsed > 0)
+            {
+                BuildIdFromQuery = parsed;
+            }
+        }
+        catch
+        {
+            BuildIdFromQuery = null;
+        }
+    }
+
+    private async Task HydrateSessionSafeAsync()
+    {
+        try
+        {
+            await Session.HydrateAsync();
+        }
+        catch
+        {
+            // ignored – hydration can fail in prerender contexts.
+        }
+    }
+
+    private void RedirectToSignIn()
+    {
+        var target = $"/signup?returnUrl={Uri.EscapeDataString(Nav.Uri)}";
+        Nav.NavigateTo(target, forceLoad: false);
+    }
+
+    private async Task<(bool Success, string? ErrorMessage, HttpStatusCode? StatusCode)> TryAddKitAsync(long buildId, long partId, long? categoryId)
+    {
+        try
+        {
+            var payload = new BuildAddPartRequest
+            {
+                PartId = partId,
+                Qty = 1m,
+                CategoryId = categoryId
+            };
+
+            var response = await Http.PostAsJsonAsync($"/api/builds/{buildId}/add-part", payload);
+            if (response.IsSuccessStatusCode)
+            {
+                return (true, null, response.StatusCode);
+            }
+
+            var message = await ReadErrorMessageAsync(response, "Unable to add kit to build.");
+            return (false, message, response.StatusCode);
+        }
+        catch (HttpRequestException ex)
+        {
+            if (ex.StatusCode.HasValue)
+            {
+                var message = ex.StatusCode == HttpStatusCode.Unauthorized
+                    ? "Sign in to add kits to a build."
+                    : ex.Message;
+                return (false, message, ex.StatusCode);
+            }
+
+            return (false, ex.Message, null);
+        }
+    }
+
+    private static string FormatPrice(decimal? price)
+        => price.HasValue && price.Value > 0 ? price.Value.ToString("C") : "—";
+
+    private async Task<bool> EnsureBuildOptionsAsync()
+    {
+        if (BuildOptionsLoaded)
+            return true;
+
+        if (BuildOptionsLoading)
+            return false;
+
+        BuildOptionsLoading = true;
+        BuildPickerError = null;
+
+        try
+        {
+            var result = await Http.GetFromJsonAsync<List<BuildSummaryDto>>("/api/builds?page_size=200&include_archived=false&include_shared=true");
+            BuildOptions.Clear();
+            if (result is not null)
+            {
+                foreach (var build in result.Where(b => !b.IsArchived).OrderByDescending(b => b.UpdatedAt))
+                {
+                    BuildOptions.Add(build);
+                }
+            }
+
+            BuildOptionsLoaded = true;
+            if (BuildOptions.Count > 0)
+            {
+                if (BuildIdFromQuery.HasValue && BuildOptions.Any(b => b.BuildId == BuildIdFromQuery.Value))
+                {
+                    SelectedBuildId = BuildIdFromQuery;
+                }
+                else
+                {
+                    SelectedBuildId ??= BuildOptions[0].BuildId;
+                }
+            }
+
+            return true;
+        }
+        catch (Exception ex)
+        {
+            BuildPickerError = ex.Message;
+            return false;
+        }
+        finally
+        {
+            BuildOptionsLoading = false;
+        }
+    }
+
+    private async Task SubmitAddToBuildAsync()
+    {
+        if (PendingSelection is null || SelectedBuildId is null)
+        {
+            BuildPickerError = "Select a build.";
+            return;
+        }
+
+        BuildPickerSubmitting = true;
+        BuildPickerError = null;
+
+        try
+        {
+            var result = await TryAddKitAsync(SelectedBuildId.Value, PendingSelection.PartId, SelectedCategoryId);
+            if (!result.Success)
+            {
+                BuildPickerError = result.ErrorMessage ?? "Unable to add kit to build.";
+                if (result.StatusCode == HttpStatusCode.Unauthorized)
+                {
+                    RedirectToSignIn();
+                }
+                return;
+            }
+
+            ShowBuildPicker = false;
+            Toast = $"Added {PendingSelection.PartName} to build.";
+        }
+        catch (Exception ex)
+        {
+            BuildPickerError = ex.Message;
+        }
+        finally
+        {
+            BuildPickerSubmitting = false;
+            PendingSelection = null;
+        }
+    }
+
+    private static async Task<string> ReadErrorMessageAsync(HttpResponseMessage response, string fallback)
+    {
+        try
+        {
+            var text = await response.Content.ReadAsStringAsync();
+            if (!string.IsNullOrWhiteSpace(text))
+            {
+                try
+                {
+                    using var doc = JsonDocument.Parse(text);
+                    if (doc.RootElement.TryGetProperty("message", out var messageProp) && messageProp.ValueKind == JsonValueKind.String)
+                        return messageProp.GetString()!;
+                    if (doc.RootElement.TryGetProperty("error", out var errorProp) && errorProp.ValueKind == JsonValueKind.String)
+                        return errorProp.GetString()!;
+                }
+                catch (JsonException)
+                {
+                    // ignore malformed JSON
+                }
+
+                return text.Length > 200 ? text.Substring(0, 200) + "…" : text;
+            }
+        }
+        catch
+        {
+            // ignore secondary errors while reading response
+        }
+
+        return fallback;
+    }
+
+    private void CloseBuildPicker()
+    {
+        ShowBuildPicker = false;
+        BuildPickerError = null;
+        PendingSelection = null;
+    }
+
+    private sealed class BundleDetailResponse
+    {
+        public PartDto? part { get; set; }
+        public List<ComponentDto> components { get; set; } = new();
+        public List<OfferingDto> offerings { get; set; } = new();
+    }
+
+    private sealed class PartDto
+    {
+        public long part_id { get; set; }
+        public string? sku { get; set; }
+        public string? name { get; set; }
+        public string? brand_name { get; set; }
+    }
+
+    private sealed class ComponentDto
+    {
+        public long child_part_id { get; set; }
+        public string sku { get; set; } = string.Empty;
+        public string name { get; set; } = string.Empty;
+        public decimal qty_per_parent { get; set; }
+        public decimal? best_price { get; set; }
+    }
+
+    private sealed class OfferingDto
+    {
+        public long offering_id { get; set; }
+        public string vendor { get; set; } = string.Empty;
+        public decimal price { get; set; }
+        public string currency { get; set; } = "USD";
+        public string? url { get; set; }
+        public string? affiliate_url { get; set; }
+    }
+}

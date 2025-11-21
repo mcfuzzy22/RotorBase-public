@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json.schemastore.org/launchsettings.json",
+    "profiles": {
+      "http": {
+        "commandName": "Project",
+        "dotnetRunMessages": true,
+        "launchBrowser": true,
+        "applicationUrl": "http://localhost:5048",
+        "environmentVariables": {
+          "ASPNETCORE_ENVIRONMENT": "Development",
+          "PERPLEXITY_API_KEY" : "YOUR_PERPLEXITY_API_KEY",
+          "PERPLEXITY_MODEL" : "sonar-pro",
+          "PERPLEXITY_API_BASE" : "https://api.perplexity.ai"
+        }
+      },
+      "https": {
+        "commandName": "Project",
+        "dotnetRunMessages": true,
+        "launchBrowser": true,
+        "applicationUrl": "https://localhost:7163;http://localhost:5048",
+        "environmentVariables": {
+          "ASPNETCORE_ENVIRONMENT": "Development",
+          "PERPLEXITY_API_KEY" : "YOUR_PERPLEXITY_API_KEY",
+          "PERPLEXITY_MODEL" : "sonar-pro",
+          "PERPLEXITY_API_BASE" : "https://api.perplexity.ai"
+        }
+      }
+    }
+  }

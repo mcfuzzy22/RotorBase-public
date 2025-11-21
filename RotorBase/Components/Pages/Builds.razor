@@ -1,0 +1,690 @@
+@page "/builds"
+@rendermode InteractiveServer
+@using System.Net
+@using System.Net.Http
+@using System.Net.Http.Json
+@using System.Text.Json
+@using System.Text.Json.Serialization
+@using Microsoft.AspNetCore.WebUtilities
+@inject HttpClient Http
+@inject UserSession Session
+@inject NavigationManager Nav
+@implements IDisposable
+
+<h1 class="sr-only">Builds</h1>
+
+<div class="min-h-[calc(100vh-4rem)] bg-background text-foreground">
+  <div aria-hidden="true" class="pointer-events-none absolute inset-x-0 top-0 h-32 bg-grid opacity-[.12]"></div>
+
+  <section class="container py-6">
+
+    @if (!string.IsNullOrEmpty(AlertMessage))
+    {
+      <div class="card px-4 py-2 mb-4
+                  @(AlertCss == "alert-success" ? "ring-1 ring-success/25 bg-success/5 text-success"
+                    : AlertCss == "alert-warning" ? "ring-1 ring-warning/25 bg-warning/5 text-warning"
+                    : "ring-1 ring-danger/25 bg-danger/5 text-danger")">
+        @AlertMessage
+      </div>
+    }
+
+    @if (IsLoading)
+    {
+      <div class="card px-4 py-3 mb-4 flex items-center gap-2 text-sm">
+        <svg class="animate-spin h-4 w-4" viewBox="0 0 24 24">
+          <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+          <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4A4 4 0 004 12z"></path>
+        </svg>
+        <span>Loading builds…</span>
+      </div>
+    }
+    else if (!Session.IsSignedIn)
+    {
+      <div class="card ring-1 ring-info/25 bg-info/5 text-info px-4 py-2 text-sm">
+        Sign in to manage your builds.
+      </div>
+    }
+    else
+    {
+      <!-- Header -->
+      <div class="mb-5 flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h2 class="text-2xl font-bold tracking-tight">Builds</h2>
+          <div class="text-sm text-foreground/70">
+            Active builds: <span class="badge">@ActiveBuildsSummary</span>
+            · Total builds: <span class="badge">@TotalBuildsSummary</span>
+          </div>
+        </div>
+        <div class="flex items-center gap-2">
+          <NavLink class="btn btn-primary" href="/builder">Open Builder</NavLink>
+          <button class="btn btn-ghost" @onclick="Reload">Refresh</button>
+        </div>
+      </div>
+
+      @if (IsAtActiveLimit || IsAtTotalLimit)
+      {
+        <div class="card ring-1 ring-warning/25 bg-warning/5 text-warning px-4 py-2 mb-4 text-sm">
+          @QuotaWarning
+        </div>
+      }
+
+      <!-- Table card -->
+      <div class="card p-0 overflow-hidden">
+        <div class="p-3">
+          <div class="mb-3 flex flex-wrap items-center gap-3">
+            <div class="grow">
+              <div class="relative">
+                <input class="input pl-9" placeholder="Search builds" value="@Search" @oninput="OnSearchInput" />
+                <span class="pointer-events-none absolute left-2.5 top-2.5 text-foreground/50">🔎</span>
+              </div>
+            </div>
+
+            <label class="flex items-center gap-2 text-sm text-foreground/80">
+              <input type="checkbox" id="show-archived" checked="@ShowArchived" @onchange="OnShowArchivedChanged" />
+              Show archived
+            </label>
+
+            <label class="flex items-center gap-2 text-sm text-foreground/80">
+              <input type="checkbox" id="include-shared" checked="@IncludeShared" @onchange="OnIncludeSharedChanged" />
+              Include shared
+            </label>
+          </div>
+
+          @if (_builds.Count == 0)
+          {
+            <div class="text-sm text-foreground/70">
+              No builds found. Visit the builder to create and save your first build.
+            </div>
+          }
+          else
+          {
+            <div class="overflow-x-auto">
+              <table class="table">
+                <thead>
+                  <tr>
+                    <th>Name</th>
+                    <th>Progress</th>
+                    <th>Est. Cost</th>
+                    <th>Updated</th>
+                    <th class="text-right"></th>
+                  </tr>
+                </thead>
+                <tbody class="[&>tr:nth-child(odd)]:bg-muted/40">
+                  @foreach (var build in _builds)
+                  {
+                    var rowMuted = build.IsArchived ? "opacity-90" : "";
+                    <tr class="@rowMuted">
+                      <td class="align-top">
+                        @if (EditingBuildId == build.BuildId)
+                        {
+                          <div class="flex items-center gap-2">
+                            <input class="input h-8 w-64" @bind="EditingName" @bind:event="oninput" maxlength="160" />
+                            <button class="btn btn-primary h-8 px-3" @onclick="() => SaveName(build)">Save</button>
+                            <button class="btn btn-ghost h-8 px-3" @onclick="CancelEdit">Cancel</button>
+                          </div>
+                        }
+                        else
+                        {
+                          <div class="flex flex-wrap items-center gap-2">
+                            <button class="text-left text-sm font-semibold text-primary hover:underline"
+                                    title="Open in Builder" @onclick="() => OpenBuild(build)">
+                              @build.Name
+                            </button>
+
+                            @if (build.IsPublic)
+                            {
+                              <span class="badge bg-success/15 text-success ring-success/20">Public</span>
+                            }
+                            @if (!build.IsOwner && !string.IsNullOrWhiteSpace(build.AccessRole))
+                            {
+                              <span class="badge bg-secondary/15 text-secondary ring-secondary/20">@SharedLabel(build)</span>
+                            }
+                            @if (build.IsArchived)
+                            {
+                              <span class="badge bg-foreground/10 text-foreground/70 ring-border/40">Archived</span>
+                            }
+                          </div>
+
+                          @if (!string.IsNullOrWhiteSpace(build.EngineCode))
+                          {
+                            <div class="text-xs text-foreground/60">Engine: @build.EngineCode</div>
+                          }
+                        }
+                      </td>
+
+                      <td class="align-top">
+                        <div class="h-2 w-40 rounded bg-muted">
+                          <div class="h-2 rounded bg-success transition-all"
+                               style="width: @(Math.Clamp((int)Math.Round(build.CompletionPct), 0, 100))%"></div>
+                        </div>
+                        <div class="text-xs text-foreground/60">
+                          @build.CategoriesComplete / @build.CategoriesTotal categories
+                        </div>
+                      </td>
+
+                      <td class="align-top whitespace-nowrap tabular-nums">
+                        @(build.EstimatedCostLowest.HasValue ? build.EstimatedCostLowest.Value.ToString("C") : "—")
+                      </td>
+
+                      <td class="align-top whitespace-nowrap text-foreground/80">
+                        @build.UpdatedAt.ToLocalTime().ToString("g")
+                      </td>
+
+                      <td class="align-top">
+                        <div class="flex justify-end gap-1">
+                          <button class="btn btn-soft h-8 px-3" title="Open" @onclick="() => OpenBuild(build)">Open</button>
+
+                          @if (build.IsPublic && !string.IsNullOrWhiteSpace(build.PublicSlug))
+                          {
+                            <button class="btn btn-soft h-8 px-3" title="View public page" @onclick="() => OpenPublic(build)">Public</button>
+                          }
+
+                          @if (CanRename(build))
+                          {
+                            <button class="btn btn-ghost h-8 px-3" title="Rename" @onclick="() => BeginRename(build)">Rename</button>
+                          }
+
+                          <button class="btn btn-ghost h-8 px-3" title="Duplicate"
+                                  @onclick="() => Duplicate(build)" disabled="@(IsAtActiveLimit || IsAtTotalLimit)">
+                            Duplicate
+                          </button>
+
+                          @if (build.IsOwner)
+                          {
+                            <button class="btn btn-ghost h-8 px-3" title="Share" @onclick="() => Share(build)">Share</button>
+
+                            <button class="btn h-8 px-3
+                                           @(build.IsArchived
+                                              ? "btn-soft"
+                                              : "btn-ghost")"
+                                    title="@(build.IsArchived ? "Restore" : "Archive")"
+                                    @onclick="() => ToggleArchive(build)"
+                                    disabled="@(build.IsArchived && IsAtActiveLimit)">
+                              @(build.IsArchived ? "Restore" : "Archive")
+                            </button>
+
+                            @if (build.IsArchived)
+                            {
+                              <button class="btn h-8 px-3 bg-danger text-white hover:brightness-105"
+                                      title="Delete" @onclick="() => ConfirmDelete(build)">Delete</button>
+                            }
+                          }
+                        </div>
+                      </td>
+                    </tr>
+                  }
+                </tbody>
+              </table>
+            </div>
+          }
+        </div>
+      </div>
+    }
+  </section>
+</div>
+
+@if (_pendingDelete is not null)
+{
+  <div class="fixed inset-0 z-40 bg-background/60 backdrop-blur-sm"></div>
+  <div class="fixed inset-0 z-50 grid place-items-center p-4">
+    <div class="card w-full max-w-md overflow-hidden">
+      <div class="flex items-center justify-between border-b border-border/60 px-4 py-3">
+        <h5 class="text-base font-semibold">Delete build?</h5>
+        <button class="btn btn-ghost h-8 px-2" aria-label="Close" @onclick="CancelDelete" disabled="@_deleting">✕</button>
+      </div>
+
+      <div class="p-4 text-sm">
+        <p>This will permanently delete <strong>@_pendingDelete.Name</strong> and all of its selections.</p>
+        <p class="mb-0">Ensure you have archived the build before deleting it.</p>
+
+        @if (!string.IsNullOrWhiteSpace(_deleteError))
+        {
+          <div class="mt-3 card ring-1 ring-danger/25 bg-danger/5 text-danger px-3 py-2">@_deleteError</div>
+        }
+      </div>
+
+      <div class="flex justify-end gap-2 border-t border-border/60 px-4 py-3">
+        <button class="btn btn-ghost" @onclick="CancelDelete" disabled="@_deleting">Cancel</button>
+        <button class="btn bg-danger text-white hover:brightness-105"
+                @onclick="DeleteSelectedAsync" disabled="@_deleting">
+          @(_deleting ? "Deleting…" : "Delete")
+        </button>
+      </div>
+    </div>
+  </div>
+}
+
+@code {
+    private readonly List<BuildRow> _builds = new();
+    private bool IsLoading = true;
+    private string? AlertMessage;
+    private string AlertCss = "alert-danger";
+
+    private string? Search;
+    private bool ShowArchived;
+    private bool IncludeShared = true;
+
+    private long? EditingBuildId;
+    private string? EditingName;
+    private BuildRow? _pendingDelete;
+    private bool _deleting;
+    private string? _deleteError;
+
+    private string ActiveBuildsSummary
+    {
+        get
+        {
+            var usage = Session.Limits?.Usage;
+            if (usage is null)
+            {
+                return "—";
+            }
+
+            if (usage.RemainingActive.HasValue)
+            {
+                return $"{usage.ActiveBuilds} / {usage.ActiveBuilds + Math.Max(usage.RemainingActive.Value, 0)}";
+            }
+
+            return usage.ActiveBuilds.ToString();
+        }
+    }
+
+    private string TotalBuildsSummary
+    {
+        get
+        {
+            var usage = Session.Limits?.Usage;
+            if (usage is null)
+            {
+                return "—";
+            }
+
+            if (usage.RemainingTotal.HasValue)
+            {
+                return $"{usage.TotalBuilds} / {usage.TotalBuilds + Math.Max(usage.RemainingTotal.Value, 0)}";
+            }
+
+            return usage.TotalBuilds.ToString();
+        }
+    }
+
+    private bool IsAtActiveLimit
+    {
+        get
+        {
+            var remaining = Session.Limits?.Usage?.RemainingActive;
+            return remaining.HasValue && remaining.Value <= 0;
+        }
+    }
+
+    private bool IsAtTotalLimit
+    {
+        get
+        {
+            var remaining = Session.Limits?.Usage?.RemainingTotal;
+            return remaining.HasValue && remaining.Value <= 0;
+        }
+    }
+
+    private string QuotaWarning
+    {
+        get
+        {
+            var parts = new List<string>();
+            if (IsAtActiveLimit) parts.Add("active builds");
+            if (IsAtTotalLimit) parts.Add("total builds");
+
+            if (parts.Count == 0)
+            {
+                return "Plan limits reached.";
+            }
+
+            var target = parts.Count switch
+            {
+                1 => parts[0],
+                2 => string.Join(" and ", parts),
+                _ => string.Join(", ", parts)
+            };
+
+            return $"Your plan limit for {target} has been reached. Upgrade your plan or archive existing builds to continue.";
+        }
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        Session.Changed += OnSessionChanged;
+        await Session.HydrateAsync();
+        if (!Session.IsSignedIn)
+        {
+            IsLoading = false;
+            return;
+        }
+
+        await Session.RefreshLimitsAsync();
+        await LoadBuildsAsync();
+    }
+
+    private async Task LoadBuildsAsync()
+    {
+        if (!Session.IsSignedIn)
+        {
+            _builds.Clear();
+            IsLoading = false;
+            return;
+        }
+
+        IsLoading = true;
+        StateHasChanged();
+
+        try
+        {
+            AlertMessage = null;
+            var query = new Dictionary<string, string?>
+            {
+                ["include_archived"] = ShowArchived ? "true" : "false",
+                ["include_shared"] = IncludeShared ? "true" : "false"
+            };
+            if (!string.IsNullOrWhiteSpace(Search))
+            {
+                query["q"] = Search;
+            }
+
+            var uri = QueryHelpers.AddQueryString("/api/builds", query!);
+            var rows = await Http.GetFromJsonAsync<List<BuildRow>>(uri);
+            _builds.Clear();
+            if (rows is not null)
+            {
+                _builds.AddRange(rows);
+            }
+        }
+        catch (Exception ex)
+        {
+            SetAlert($"Failed to load builds: {ex.Message}");
+        }
+        finally
+        {
+            IsLoading = false;
+            StateHasChanged();
+        }
+    }
+
+    private void BeginRename(BuildRow build)
+    {
+        EditingBuildId = build.BuildId;
+        EditingName = build.Name;
+    }
+
+    private void CancelEdit()
+    {
+        EditingBuildId = null;
+        EditingName = null;
+    }
+
+    private async Task SaveName(BuildRow build)
+    {
+        if (EditingBuildId != build.BuildId || string.IsNullOrWhiteSpace(EditingName))
+        {
+            CancelEdit();
+            return;
+        }
+
+        var response = await PatchJsonAsync($"/api/builds/{build.BuildId}", new { name = EditingName!.Trim() });
+        if (!response.IsSuccessStatusCode)
+        {
+            var message = await response.Content.ReadAsStringAsync();
+            SetAlert($"Rename failed: {message}");
+        }
+
+        CancelEdit();
+        await LoadBuildsAsync();
+    }
+
+    private async Task Duplicate(BuildRow build)
+    {
+        var response = await Http.PostAsync($"/api/builds/{build.BuildId}/duplicate", null);
+        if (!response.IsSuccessStatusCode)
+        {
+            var payload = await response.Content.ReadAsStringAsync();
+            if (response.StatusCode == HttpStatusCode.Forbidden)
+            {
+                SetAlert(ParseError(payload, "Plan limit reached. Upgrade your plan to duplicate builds."), "alert-warning");
+                await Session.RefreshLimitsAsync();
+                return;
+            }
+
+            SetAlert($"Duplicate failed: {(int)response.StatusCode} {response.ReasonPhrase}. {payload}");
+            return;
+        }
+
+        await Session.RefreshLimitsAsync();
+        await LoadBuildsAsync();
+    }
+
+    private async Task ToggleArchive(BuildRow build)
+    {
+        var response = await PatchJsonAsync($"/api/builds/{build.BuildId}", new { is_archived = !build.IsArchived });
+        if (!response.IsSuccessStatusCode)
+        {
+            var payload = await response.Content.ReadAsStringAsync();
+            if (response.StatusCode == HttpStatusCode.Forbidden)
+            {
+                SetAlert(ParseError(payload, "Active build limit reached. Archive another build first."), "alert-warning");
+                await Session.RefreshLimitsAsync();
+                return;
+            }
+
+            SetAlert($"Archive update failed: {(int)response.StatusCode} {response.ReasonPhrase}. {payload}");
+            return;
+        }
+
+        await Session.RefreshLimitsAsync();
+        await LoadBuildsAsync();
+    }
+
+    private void Share(BuildRow build) => Nav.NavigateTo($"/builds/{build.BuildId}/share");
+
+    private void OpenBuild(BuildRow build) => Nav.NavigateTo($"/builder/{build.BuildId}");
+
+    private void OpenPublic(BuildRow build)
+    {
+        if (!string.IsNullOrWhiteSpace(build.PublicSlug))
+        {
+            Nav.NavigateTo($"/builds/public/{build.PublicSlug}");
+        }
+    }
+
+    private bool CanRename(BuildRow build)
+        => build.IsOwner || string.Equals(build.AccessRole, "editor", StringComparison.OrdinalIgnoreCase);
+
+    private string SharedLabel(BuildRow build)
+        => build.IsOwner ? "Owner" : string.IsNullOrWhiteSpace(build.AccessRole) ? "Viewer" : build.AccessRole!;
+
+    private string RowCss(BuildRow build)
+        => build.IsArchived ? "table-secondary" : string.Empty;
+
+    private void SetAlert(string message, string css = "alert-danger")
+    {
+        AlertMessage = message;
+        AlertCss = css;
+        StateHasChanged();
+    }
+
+    private async Task Reload()
+    {
+        await Session.RefreshLimitsAsync();
+        await LoadBuildsAsync();
+    }
+
+    private void ConfirmDelete(BuildRow build)
+    {
+        if (!build.IsOwner || !build.IsArchived) return;
+        _pendingDelete = build;
+        _deleteError = null;
+    }
+
+    private void CancelDelete()
+    {
+        if (_deleting) return;
+        _pendingDelete = null;
+        _deleteError = null;
+    }
+
+    private async Task DeleteSelectedAsync()
+    {
+        if (_pendingDelete is null || _deleting) return;
+        _deleting = true;
+        _deleteError = null;
+
+        try
+        {
+            var response = await Http.DeleteAsync($"/api/builds/{_pendingDelete.BuildId}");
+            if (response.IsSuccessStatusCode)
+            {
+                var deletedName = _pendingDelete.Name;
+                _pendingDelete = null;
+                _deleting = false;
+                SetAlert($"Deleted {deletedName}.", "alert-success");
+                await Session.RefreshLimitsAsync();
+                await LoadBuildsAsync();
+                return;
+            }
+
+            var payload = await response.Content.ReadAsStringAsync();
+            if (response.StatusCode == HttpStatusCode.Conflict)
+            {
+                _deleteError = ParseError(payload, "Archive the build before deleting it.");
+            }
+            else if (response.StatusCode == HttpStatusCode.Forbidden)
+            {
+                _deleteError = ParseError(payload, "You do not have permission to delete this build.");
+            }
+            else
+            {
+                _deleteError = $"Delete failed: {(int)response.StatusCode} {response.ReasonPhrase}. {payload}";
+            }
+        }
+        catch (Exception ex)
+        {
+            _deleteError = $"Delete failed: {ex.Message}";
+        }
+        finally
+        {
+            _deleting = false;
+        }
+
+        StateHasChanged();
+    }
+
+    private static string ParseError(string content, string fallback)
+    {
+        if (string.IsNullOrWhiteSpace(content))
+        {
+            return fallback;
+        }
+
+        try
+        {
+            using var doc = JsonDocument.Parse(content);
+            if (doc.RootElement.ValueKind == JsonValueKind.Object)
+            {
+                if (doc.RootElement.TryGetProperty("message", out var message) && message.ValueKind == JsonValueKind.String)
+                {
+                    var value = message.GetString();
+                    if (!string.IsNullOrWhiteSpace(value))
+                    {
+                        return value!;
+                    }
+                }
+
+                if (doc.RootElement.TryGetProperty("error", out var error) && error.ValueKind == JsonValueKind.String)
+                {
+                    var value = error.GetString();
+                    if (!string.IsNullOrWhiteSpace(value))
+                    {
+                        return value!;
+                    }
+                }
+            }
+        }
+        catch
+        {
+            // Ignore JSON parse failures.
+        }
+
+        return fallback;
+    }
+
+    private Task<HttpResponseMessage> PatchJsonAsync<TPayload>(string uri, TPayload payload)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Patch, uri)
+        {
+            Content = JsonContent.Create(payload)
+        };
+        return Http.SendAsync(request);
+    }
+
+    private void OnSessionChanged()
+    {
+        _ = InvokeAsync(async () =>
+        {
+            if (!Session.IsSignedIn)
+            {
+                _builds.Clear();
+                IsLoading = false;
+                StateHasChanged();
+                return;
+            }
+
+            await LoadBuildsAsync();
+        });
+    }
+
+    private async Task OnSearchInput(ChangeEventArgs args)
+    {
+        Search = args.Value?.ToString();
+        await LoadBuildsAsync();
+    }
+
+    private async Task OnShowArchivedChanged(ChangeEventArgs args)
+    {
+        ShowArchived = ToBool(args.Value);
+        await LoadBuildsAsync();
+    }
+
+    private async Task OnIncludeSharedChanged(ChangeEventArgs args)
+    {
+        IncludeShared = ToBool(args.Value);
+        await LoadBuildsAsync();
+    }
+
+    private static bool ToBool(object? value)
+        => value switch
+        {
+            bool b => b,
+            string s => s.Equals("true", StringComparison.OrdinalIgnoreCase) || s == "on" || s == "1",
+            _ => false
+        };
+
+    public void Dispose()
+    {
+        Session.Changed -= OnSessionChanged;
+    }
+
+    private sealed class BuildRow
+    {
+        [JsonPropertyName("build_id")] public long BuildId { get; set; }
+        [JsonPropertyName("name")] public string Name { get; set; } = string.Empty;
+        [JsonPropertyName("is_archived")] public bool IsArchived { get; set; }
+        [JsonPropertyName("engine_code")] public string? EngineCode { get; set; }
+        [JsonPropertyName("completion_pct")] public decimal CompletionPct { get; set; }
+        [JsonPropertyName("categories_complete")] public int CategoriesComplete { get; set; }
+        [JsonPropertyName("categories_total")] public int CategoriesTotal { get; set; }
+        [JsonPropertyName("estimated_cost_lowest")] public decimal? EstimatedCostLowest { get; set; }
+        [JsonPropertyName("updated_at")] public DateTime UpdatedAt { get; set; }
+        [JsonPropertyName("is_owner")] public bool IsOwner { get; set; }
+        [JsonPropertyName("access_role")] public string? AccessRole { get; set; }
+        [JsonPropertyName("is_public")] public bool IsPublic { get; set; }
+        [JsonPropertyName("public_slug")] public string? PublicSlug { get; set; }
+    }
+
+}

@@ -1,0 +1,2208 @@
+@page "/admin/kits"
+@rendermode InteractiveServer
+@using System.Net.Http.Json
+@using System.Text.Json
+@using System.Text.Json.Serialization
+@using System.Linq
+@using System.Globalization
+@using RotorBase
+@inject HttpClient Http
+@inject UserSession Session
+
+<h1>Admin · Kits</h1>
+
+@if (!Session.IsSignedIn)
+{
+    <div class="alert alert-info" role="alert">Sign in to view admin tools.</div>
+}
+else if (!Session.IsAdmin)
+{
+    <div class="alert alert-warning" role="alert">You need admin access to manage kits.</div>
+}
+else if (_loading)
+{
+    <div class="d-flex align-items-center gap-2">
+        <div class="spinner-border" role="status" aria-hidden="true"></div>
+        <span>Loading kits…</span>
+    </div>
+}
+else
+{
+    @if (!string.IsNullOrWhiteSpace(_globalError))
+    {
+        <div class="alert alert-warning" role="alert">@_globalError</div>
+    }
+    @if (!string.IsNullOrWhiteSpace(_globalInfo))
+    {
+        <div class="alert alert-success" role="alert">@_globalInfo</div>
+    }
+
+    <div class="row">
+        <div class="col-md-4">
+            <div class="card mb-3">
+                <div class="card-body">
+                    <label class="form-label">Search</label>
+                    <input class="form-control" placeholder="SKU or name" value="@_search" @oninput="OnSearchChanged" />
+                    <label class="form-label mt-3">Brand</label>
+                    <input class="form-control" placeholder="Brand" value="@_brand" @oninput="OnBrandChanged" />
+                </div>
+            </div>
+
+            <div class="list-group overflow-auto" style="max-height: 70vh;">
+                @foreach (var summary in _kits)
+                {
+                    var active = _selectedKit?.Part?.PartId == summary.PartId ? "active" : string.Empty;
+                    <button class="list-group-item list-group-item-action @active" @onclick="() => LoadKitAsync(summary.PartId)">
+                        <div class="fw-semibold">@summary.Sku</div>
+                        <div class="small text-muted">@summary.Name</div>
+                        <div class="small text-secondary">@summary.BrandName · @summary.Status</div>
+                    </button>
+                }
+            </div>
+        </div>
+
+        <div class="col-md-8">
+            @if (_selectedKit is null)
+            {
+                <div class="alert alert-secondary" role="alert">Select a kit to edit.</div>
+            }
+            else
+            {
+                <div class="d-flex justify-content-between align-items-center mb-3">
+                    <div>
+                        <h4 class="mb-0">@_selectedKit.Part?.Name</h4>
+                        <div class="text-muted">SKU: @_selectedKit.Part?.Sku</div>
+                    </div>
+                    <div class="d-flex flex-column align-items-end gap-2">
+                        <span class="badge bg-light text-dark">@_selectedKit.Part?.Status</span>
+                        <div class="d-flex gap-2">
+                            <button class="btn btn-sm btn-outline-secondary" @onclick="SoftDeleteAsync" disabled="_deleteBusy">Soft delete</button>
+                            <button class="btn btn-sm btn-outline-danger" @onclick="OpenDeleteModal">Delete…</button>
+                        </div>
+                    </div>
+                </div>
+
+                <ul class="nav nav-pills mb-3">
+                    @foreach (var tab in _tabs)
+                    {
+                        var cls = tab == _activeTab ? "nav-link active" : "nav-link";
+                        <li class="nav-item">
+                            <button class="@cls" @onclick="() => SwitchTab(tab)">@tab</button>
+                        </li>
+                    }
+                </ul>
+
+                @if (_activeTab == "Details")
+                {
+                    @if (!string.IsNullOrWhiteSpace(_detailsError))
+                    {
+                        <div class="alert alert-danger" role="alert">@_detailsError</div>
+                    }
+
+                    <div class="row g-3">
+                        <div class="col-md-6">
+                            <label class="form-label">SKU</label>
+                            <input class="form-control" @bind="_detailsForm.Sku" />
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">Name</label>
+                            <input class="form-control" @bind="_detailsForm.Name" />
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">Brand</label>
+                            <input class="form-control" @bind="_detailsForm.BrandName" />
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">Status</label>
+                            <select class="form-select" @bind="_detailsForm.Status">
+                                <option value="active">active</option>
+                                <option value="draft">draft</option>
+                                <option value="discontinued">discontinued</option>
+                            </select>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">Unit of measure</label>
+                            <input class="form-control" @bind="_detailsForm.Uom" />
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">Pieces per unit</label>
+                            <input class="form-control" type="number" step="0.001" value="@_detailsForm.PiecesPerUnit" @oninput="OnDetailsPiecesChanged" />
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">Image URL</label>
+                            <input class="form-control" @bind="_detailsForm.ImageUrl" />
+                        </div>
+                        <div class="col-md-6 d-flex align-items-end">
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" checked="@(_detailsForm.IsKit ?? false)" @onchange="OnDetailsKitChanged" />
+                                <label class="form-check-label">Kit</label>
+                            </div>
+                        </div>
+                        <div class="col-12">
+                            <label class="form-label">Description</label>
+                            <textarea class="form-control" rows="3" @bind="_detailsForm.Description"></textarea>
+                        </div>
+                    </div>
+
+                    <div class="text-end mt-3">
+                        <button class="btn btn-primary" @onclick="SaveDetailsAsync">Save changes</button>
+                    </div>
+                }
+                else if (_activeTab == "Categories")
+                {
+                    @if (!string.IsNullOrWhiteSpace(_categoryError))
+                    {
+                        <div class="alert alert-danger" role="alert">@_categoryError</div>
+                    }
+
+                    <div class="row g-3">
+                        <div class="col-md-6">
+                            <h6>Current categories</h6>
+                            <ul class="list-group">
+                                @foreach (var cat in _selectedKit.Categories)
+                                {
+                                    <li class="list-group-item d-flex justify-content-between align-items-center">
+                                        <div>
+                                            <div class="fw-semibold">@cat.Name</div>
+                                            <div class="small text-muted">@cat.Slug</div>
+                                        </div>
+                                        <div>
+                                            @if (cat.IsPrimary)
+                                            {
+                                                <span class="badge bg-success me-2">Primary</span>
+                                            }
+                                            else
+                                            {
+                                                <button class="btn btn-sm btn-outline-primary me-2" @onclick="() => MakePrimaryAsync(cat.CategoryId)">Make primary</button>
+                                            }
+                                            <button class="btn btn-sm btn-outline-danger" @onclick="() => RemoveCategoryAsync(cat.CategoryId)">Remove</button>
+                                        </div>
+                                    </li>
+                                }
+                            </ul>
+                        </div>
+                        <div class="col-md-6">
+                            <h6>Add category</h6>
+                            <input class="form-control mb-2" placeholder="Search" value="@_categorySearch" @oninput="SearchCategoriesAsync" />
+                            <div class="list-group" style="max-height: 260px; overflow:auto;">
+                                @foreach (var leaf in _leafCategories)
+                                {
+                                    <button class="list-group-item list-group-item-action" @onclick="() => AddCategoryAsync(leaf.CategoryId, !_selectedKit.Categories.Any())">
+                                        <div class="fw-semibold">@leaf.Name</div>
+                                        <div class="small text-muted">@leaf.Slug</div>
+                                    </button>
+                                }
+                            </div>
+                        </div>
+                    </div>
+                }
+                else if (_activeTab == "Fitment")
+                {
+                    @if (!string.IsNullOrWhiteSpace(_fitmentError))
+                    {
+                        <div class="alert alert-danger" role="alert">@_fitmentError</div>
+                    }
+
+                    <div class="row g-2 align-items-end mb-3">
+                        <div class="col-md-4">
+                            <label class="form-label">Engine code</label>
+                            <input class="form-control" @bind="_fitmentForm.EngineCode" />
+                        </div>
+                        <div class="col-md-2">
+                            <label class="form-label">Start</label>
+                            <input class="form-control" type="number" value="@_fitmentForm.YearsStart" @oninput="OnFitmentStartChanged" />
+                        </div>
+                        <div class="col-md-2">
+                            <label class="form-label">End</label>
+                            <input class="form-control" type="number" value="@_fitmentForm.YearsEnd" @oninput="OnFitmentEndChanged" />
+                        </div>
+                        <div class="col-md-3">
+                            <label class="form-label">Notes</label>
+                            <input class="form-control" @bind="_fitmentForm.Notes" />
+                        </div>
+                        <div class="col-md-1 text-end">
+                            <button class="btn btn-primary mt-4" @onclick="AddFitmentAsync">Add</button>
+                        </div>
+                    </div>
+
+                    <table class="table table-sm table-striped">
+                        <thead>
+                            <tr><th>Engine</th><th>Years</th><th>Notes</th><th></th></tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var row in _selectedKit.Fitment)
+                            {
+                                var years = (row.YearsStart.HasValue || row.YearsEnd.HasValue)
+                                    ? $"{row.YearsStart?.ToString() ?? string.Empty}{(row.YearsEnd.HasValue ? $" - {row.YearsEnd}" : string.Empty)}"
+                                    : string.Empty;
+                                <tr>
+                                    <td>@row.Code</td>
+                                    <td>@years</td>
+                                    <td>@row.Notes</td>
+                                    <td class="text-end">
+                                        <button class="btn btn-sm btn-outline-danger" @onclick="() => DeleteFitmentAsync(row.PartFitmentId)">Delete</button>
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                }
+                else if (_activeTab == "Offerings")
+                {
+                    @if (!string.IsNullOrWhiteSpace(_offeringError))
+                    {
+                        <div class="alert alert-danger" role="alert">@_offeringError</div>
+                    }
+
+                    <div class="row g-2 align-items-end mb-3">
+                        <div class="col-md-3">
+                            <label class="form-label">Vendor</label>
+                            <input class="form-control" @bind="_offeringForm.VendorName" />
+                        </div>
+                        <div class="col-md-2">
+                            <label class="form-label">Price</label>
+                            <input class="form-control" type="number" step="0.01" value="@_offeringForm.Price" @oninput="OnOfferingPriceChanged" />
+                        </div>
+                        <div class="col-md-2">
+                            <label class="form-label">Currency</label>
+                            <input class="form-control" @bind="_offeringForm.Currency" />
+                        </div>
+                        <div class="col-md-3">
+                            <label class="form-label">Availability</label>
+                            <select class="form-select" @bind="_offeringForm.Availability">
+                                <option value="in_stock">in_stock</option>
+                                <option value="backorder">backorder</option>
+                                <option value="discontinued">discontinued</option>
+                                <option value="unknown">unknown</option>
+                            </select>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">Product URL</label>
+                            <input class="form-control" @bind="_offeringForm.Url" />
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">Affiliate URL</label>
+                            <input class="form-control" @bind="_offeringForm.AffiliateUrl" />
+                        </div>
+                        <div class="col-12 text-end">
+                            <button class="btn btn-primary" @onclick="AddOfferingAsync">Add offering</button>
+                        </div>
+                    </div>
+
+                    <table class="table table-sm table-striped">
+                        <thead>
+                            <tr><th>Vendor</th><th>Price</th><th>Availability</th><th>URL</th><th></th></tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var row in _selectedKit.Offerings)
+                            {
+                                <tr>
+                                    <td>@row.Vendor</td>
+                                    <td>@(row.Price?.ToString("C") ?? "-")</td>
+                                    <td>@row.Availability</td>
+                                    <td>
+                                        @if (!string.IsNullOrWhiteSpace(row.Url))
+                                        {
+                                            <a href="@row.Url" target="_blank">@row.Url</a>
+                                        }
+                                    </td>
+                                    <td class="text-end">
+                                        <button class="btn btn-sm btn-outline-danger" @onclick="() => DeleteOfferingAsync(row.OfferingId)">Delete</button>
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                }
+                else if (_activeTab == "Components")
+                {
+                    @if (!string.IsNullOrWhiteSpace(_componentError))
+                    {
+                        <div class="alert alert-danger" role="alert">@_componentError</div>
+                    }
+
+                    @if (!(_selectedKit.Part?.IsKit ?? false))
+                    {
+                        <div class="alert alert-info" role="alert">Enable the kit option in details to manage components.</div>
+                    }
+                    else
+                    {
+                        @if (!string.IsNullOrWhiteSpace(_componentInfoMessage))
+                        {
+                            <div class="alert alert-success" role="alert">@_componentInfoMessage</div>
+                        }
+
+                        @if (!string.IsNullOrWhiteSpace(_componentSaveError))
+                        {
+                            <div class="alert alert-danger" role="alert">@_componentSaveError</div>
+                        }
+
+                        <div class="card mb-3">
+                            <div class="card-body d-flex justify-content-between align-items-center flex-wrap gap-2">
+                                <div>
+                                    <h6 class="mb-0">Add components</h6>
+                                    <small class="text-muted">Pick an existing part or create a new one inline.</small>
+                                </div>
+                                <button class="btn btn-primary" @onclick="OpenComponentModal">Add component</button>
+                            </div>
+                        </div>
+
+                        @if (_componentModalOpen)
+                        {
+                            <div class="modal d-block" tabindex="-1" style="background-color: rgba(0,0,0,0.55);">
+                                <div class="modal-dialog modal-xl modal-dialog-centered">
+                                    <div class="modal-content">
+                                        <div class="modal-header">
+                                            <h5 class="modal-title">Add component</h5>
+                                            <button type="button" class="btn-close" @onclick="CloseComponentModal" aria-label="Close"></button>
+                                        </div>
+                                        <div class="modal-body">
+                                            <ul class="nav nav-tabs mb-3">
+                                                <li class="nav-item">
+                                                    <button type="button" class="@GetModalTabClass("existing")" @onclick="@(() => SwitchComponentModalTab("existing"))">Existing part</button>
+                                                </li>
+                                                <li class="nav-item">
+                                                    <button type="button" class="@GetModalTabClass("new")" @onclick="@(() => SwitchComponentModalTab("new"))">New part</button>
+                                                </li>
+                                            </ul>
+
+                                            @if (_componentModalTab == "existing")
+                                            {
+                                                <div class="mb-3">
+                                                    <label class="form-label">Search parts</label>
+                                                    <input class="form-control" placeholder="Search SKU or name" value="@_componentSearchQuery" @oninput="OnComponentSearchChanged" />
+                                                </div>
+
+                                                <div class="border rounded" style="max-height: 320px; overflow:auto;">
+                                                    @if (_componentSearchResults.Count == 0)
+                                                    {
+                                                        <div class="p-3 text-muted">No parts found.</div>
+                                                    }
+                                                    else
+                                                    {
+                                                        <div class="list-group list-group-flush">
+                                                            @foreach (var row in _componentSearchResults)
+                                                            {
+                                                                var activeClass = _selectedSearchPart?.PartId == row.PartId ? "active" : string.Empty;
+                                                                <button type="button" class="list-group-item list-group-item-action d-flex justify-content-between align-items-center @activeClass" @onclick="() => SelectExistingPart(row)">
+                                                                    <div>
+                                                                        <div class="fw-semibold">@row.Name</div>
+                                                                        <div class="small text-muted">@row.Sku</div>
+                                                                    </div>
+                                                                    <div class="text-end">
+                                                                        @if (row.BestPrice.HasValue)
+                                                                        {
+                                                                            <span class="badge bg-light text-dark">@row.BestPrice.Value.ToString("C")</span>
+                                                                        }
+                                                                    </div>
+                                                                </button>
+                                                            }
+                                                        </div>
+                                                    }
+                                                </div>
+
+                                                <div class="row g-2 align-items-center mt-3">
+                                                    <div class="col-auto">
+                                                        <label class="form-label mb-0">Quantity</label>
+                                                    </div>
+                                                    <div class="col-auto">
+                                                        <input type="number" class="form-control" step="0.001" style="width: 140px;" value="@_componentModalQty" @oninput="OnComponentModalQtyChanged" />
+                                                    </div>
+                                                    <div class="col-auto ms-auto">
+                                                        <button class="btn btn-primary" @onclick="AddExistingComponentAsync" disabled="@(_selectedSearchPart is null)">Add</button>
+                                                    </div>
+                                                </div>
+                                            }
+                                            else
+                                            {
+                                                <div class="row g-3">
+                                                    <div class="col-md-4">
+                                                        <label class="form-label">SKU</label>
+                                                        <input class="form-control" @bind="_newPartForm.Sku" />
+                                                    </div>
+                                                    <div class="col-md-4">
+                                                        <label class="form-label">Name</label>
+                                                        <input class="form-control" @bind="_newPartForm.Name" />
+                                                    </div>
+                                                    <div class="col-md-4">
+                                                        <label class="form-label">Brand</label>
+                                                        <input class="form-control" @bind="_newPartForm.Brand" />
+                                                    </div>
+                                                    <div class="col-md-4">
+                                                        <label class="form-label">Leaf category slug</label>
+                                                        <input class="form-control" @bind="_newPartForm.CategorySlug" />
+                                                    </div>
+                                                    <div class="col-md-4">
+                                                        <label class="form-label">Pieces per unit</label>
+                                                        <input class="form-control" @bind="_newPartForm.PiecesPerUnit" />
+                                                    </div>
+                                                    <div class="col-md-4">
+                                                        <label class="form-label">Quantity</label>
+                                                        <input type="number" class="form-control" step="0.001" value="@_componentModalQty" @oninput="OnComponentModalQtyChanged" />
+                                                    </div>
+                                                    <div class="col-md-4">
+                                                        <label class="form-label">Initial vendor (optional)</label>
+                                                        <input class="form-control" @bind="_newPartForm.Vendor" />
+                                                    </div>
+                                                    <div class="col-md-4">
+                                                        <label class="form-label">Initial price</label>
+                                                        <input class="form-control" @bind="_newPartForm.Price" />
+                                                    </div>
+                                                    <div class="col-md-4">
+                                                        <label class="form-label">Vendor URL</label>
+                                                        <input class="form-control" @bind="_newPartForm.Url" />
+                                                    </div>
+                                                </div>
+
+                                                <div class="text-end mt-3">
+                                                    <button class="btn btn-success" @onclick="CreateAndAddComponentAsync">Create &amp; add</button>
+                                                </div>
+                                            }
+
+                                            @if (!string.IsNullOrWhiteSpace(_componentModalError))
+                                            {
+                                                <div class="alert alert-danger mt-3 mb-0" role="alert">@_componentModalError</div>
+                                            }
+                                        </div>
+                                        <div class="modal-footer">
+                                            <button class="btn btn-secondary" @onclick="CloseComponentModal">Close</button>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        }
+
+                        <div class="card mb-3">
+                            <div class="card-body">
+                                <div class="d-flex justify-content-between align-items-center mb-2">
+                                    <h6 class="mb-0">Components</h6>
+                                    <button class="btn btn-primary btn-sm" disabled="@(!_componentsDirty || _componentSaving)" @onclick="SaveComponentPricingAsync">
+                                        @_componentSaving ? "Saving…" : "Save components"
+                                    </button>
+                                </div>
+
+                                @if (_componentEdits.Count == 0)
+                                {
+                                    <div class="alert alert-secondary mb-0" role="alert">No components found for this kit.</div>
+                                }
+                                else
+                                {
+                                    <div class="table-responsive">
+                                        <table class="table table-sm align-middle">
+                                            <thead>
+                                                <tr>
+                                                    <th>SKU</th>
+                                                    <th>Name</th>
+                                                    <th class="text-end" style="width: 110px;">Qty</th>
+                                                    <th class="text-end" style="width: 180px;">Price / Curr.</th>
+                                                    <th style="width: 220px;">Vendor</th>
+                                                    <th style="width: 200px;">URL</th>
+                                                    <th style="width: 140px;">Availability</th>
+                                                    <th class="text-end" style="width: 110px;">Subtotal</th>
+                                                    <th class="text-end" style="width: 80px;"></th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                @foreach (var row in _componentEdits)
+                                                {
+                                                    <tr>
+                                                        <td>@row.Sku</td>
+                                                        <td>@row.Name</td>
+                                                        <td class="text-end">
+                                                            <input class="form-control form-control-sm text-end" type="number" step="0.001" value="@row.Qty" @oninput="e => OnComponentQtyInput(row, e)" />
+                                                        </td>
+                                                        <td class="text-end">
+                                                            <div class="d-flex gap-1 justify-content-end">
+                                                                <input class="form-control form-control-sm text-end" type="number" step="0.01" value="@row.Price" @oninput="e => OnComponentPriceInput(row, e)" />
+                                                                <input class="form-control form-control-sm text-uppercase" style="width: 70px;" value="@row.Currency" @oninput="e => OnComponentCurrencyInput(row, e)" />
+                                                            </div>
+                                                        </td>
+                                                        <td>
+                                                            <select class="form-select form-select-sm" value="@GetVendorSelectValue(row)" @onchange="e => OnComponentVendorChanged(row, e)">
+                                                                <option value="">Select vendor…</option>
+                                                                @foreach (var vendor in _vendors)
+                                                                {
+                                                                    <option value="@vendor.VendorId">@vendor.Name</option>
+                                                                }
+                                                                <option value="@CustomVendorValue">Custom vendor…</option>
+                                                            </select>
+                                                            @if (row.VendorId is null || row.VendorId <= 0)
+                                                            {
+                                                                <input class="form-control form-control-sm mt-1" placeholder="Vendor name" value="@row.VendorName" @oninput="e => OnComponentVendorNameInput(row, e)" />
+                                                            }
+                                                        </td>
+                                                        <td>
+                                                            <input class="form-control form-control-sm" placeholder="https://…" value="@row.Url" @oninput="e => OnComponentUrlInput(row, e)" />
+                                                        </td>
+                                                        <td>
+                                                            <select class="form-select form-select-sm" value="@row.Availability" @onchange="e => OnComponentAvailabilityChanged(row, e)">
+                                                                @foreach (var option in _availabilityOptions)
+                                                                {
+                                                                    <option value="@option">@option</option>
+                                                                }
+                                                            </select>
+                                                        </td>
+                                                        <td class="text-end">@((row.Qty * row.Price).ToString("C"))</td>
+                                                        <td class="text-end">
+                                                            <button class="btn btn-sm btn-outline-danger" @onclick="() => DeleteComponentAsync(row.ChildPartId)">Remove</button>
+                                                        </td>
+                                                    </tr>
+                                                }
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                }
+                            </div>
+                        </div>
+
+                        <div class="card mb-3">
+                            <div class="card-body">
+                                <div class="d-flex justify-content-between align-items-center">
+                                    <div class="fw-semibold">Roll-up total: @_componentTotal.ToString("C")</div>
+                                    <button class="btn btn-outline-secondary btn-sm" @onclick="ValidateKitAsync">Validate BOM</button>
+                                </div>
+
+                                @if (_validationOk.HasValue)
+                                {
+                                    if (_validationOk.Value)
+                                    {
+                                        <div class="alert alert-success mt-3" role="alert">Kit validation passed.</div>
+                                    }
+                                    else if (_validationMessages.Count > 0)
+                                    {
+                                        <div class="alert alert-warning mt-3" role="alert">
+                                            <div class="fw-semibold mb-2">Validation issues:</div>
+                                            <ul class="mb-0">
+                                                @foreach (var msg in _validationMessages)
+                                                {
+                                                    <li>@msg</li>
+                                                }
+                                            </ul>
+                                        </div>
+                                    }
+                                }
+                            </div>
+                        </div>
+
+                        <div class="card mb-3">
+                            <div class="card-body">
+                                <div class="d-flex justify-content-between align-items-center mb-2">
+                                    <h6 class="mb-0">Kit price</h6>
+                                    <div class="d-flex gap-2">
+                                        <button class="btn btn-success btn-sm" disabled="@_kitSaving" @onclick="SaveKitPricingAsync">@(_kitSaving ? "Saving…" : "Save kit price")</button>
+                                        <button class="btn btn-link btn-sm" type="button" @onclick="() => SyncKitPriceAsync(0.10m, 1m)">Sync from roll-up (+10%)</button>
+                                    </div>
+                                </div>
+
+                                @if (!string.IsNullOrWhiteSpace(_kitPriceMessage))
+                                {
+                                    <div class="alert alert-success" role="alert">@_kitPriceMessage</div>
+                                }
+
+                                @if (!string.IsNullOrWhiteSpace(_kitPriceError))
+                                {
+                                    <div class="alert alert-danger" role="alert">@_kitPriceError</div>
+                                }
+
+                                <div class="row g-2 align-items-end">
+                                    <div class="col-md-3">
+                                        <label class="form-label">Vendor</label>
+                                        <select class="form-select" value="@KitVendorSelectValue" @onchange="OnKitVendorChanged">
+                                            <option value="">Select vendor…</option>
+                                            @foreach (var vendor in _vendors)
+                                            {
+                                                <option value="@vendor.VendorId">@vendor.Name</option>
+                                            }
+                                            <option value="@CustomVendorValue">Custom vendor…</option>
+                                        </select>
+                                    </div>
+                                    @if (IsKitVendorCustom)
+                                    {
+                                        <div class="col-md-3">
+                                            <label class="form-label">Vendor name</label>
+                                            <input class="form-control" value="@_kitVendorName" @oninput="OnKitVendorNameChanged" />
+                                        </div>
+                                    }
+                                    <div class="col-md-2">
+                                        <label class="form-label">Price</label>
+                                        <input class="form-control" type="number" step="0.01" value="@_kitPrice" @oninput="OnKitPriceChanged" />
+                                    </div>
+                                    <div class="col-md-1">
+                                        <label class="form-label">Curr.</label>
+                                        <input class="form-control text-uppercase" value="@_kitCurrency" @oninput="OnKitCurrencyChanged" />
+                                    </div>
+                                    <div class="col-md-2">
+                                        <label class="form-label">Availability</label>
+                                        <select class="form-select" value="@_kitAvailability" @onchange="OnKitAvailabilityChanged">
+                                            @foreach (var option in _availabilityOptions)
+                                            {
+                                                <option value="@option">@option</option>
+                                            }
+                                        </select>
+                                    </div>
+                                    <div class="col-md-12">
+                                        <label class="form-label">URL</label>
+                                        <input class="form-control" placeholder="https://…" value="@_kitUrl" @oninput="OnKitUrlChanged" />
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    }
+                }
+                else if (_activeTab == "Preview")
+                {
+                    <div class="card">
+                        <div class="card-body">
+                            <h5 class="card-title">Kit summary</h5>
+                            <p class="card-text">Estimated component roll-up: @_componentTotal.ToString("C")</p>
+                            <p class="card-text text-muted">Preview aggregates live component pricing and quantities. Run validation from the Components tab for detailed checks.</p>
+                        </div>
+                    </div>
+                }
+            }
+        </div>
+    </div>
+}
+
+@if (_showDeleteModal)
+{
+    <div class="modal-backdrop fade show"></div>
+    <div class="modal fade show d-block" tabindex="-1" role="dialog">
+        <div class="modal-dialog" role="document">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">Delete kit</h5>
+                    <button type="button" class="btn-close" aria-label="Close" @onclick="CloseDeleteModal" disabled="@_deleteBusy"></button>
+                </div>
+                <div class="modal-body">
+                    @if (!string.IsNullOrWhiteSpace(_deleteError))
+                    {
+                        <div class="alert alert-danger" role="alert">@_deleteError</div>
+                    }
+                    else if (_deleteProbe is null)
+                    {
+                        <div class="d-flex align-items-center gap-2">
+                            <div class="spinner-border" role="status" aria-hidden="true"></div>
+                            <span>Checking dependencies…</span>
+                        </div>
+                    }
+                    else
+                    {
+                        <p>Deleting a kit removes its BOM and all related data.</p>
+                        <ul class="list-unstyled small text-muted mb-3">
+                            <li>In builds: <strong>@_deleteProbe.Blockers.InBuilds</strong></li>
+                            <li>Used as child in other kits: <strong>@_deleteProbe.Blockers.UsedAsChildInKits</strong></li>
+                            <li>Component rows: @_deleteProbe.Info.BomChildren</li>
+                        </ul>
+                        @if (!_deleteProbe.Deletable)
+                        {
+                            <div class="alert alert-warning" role="alert">
+                                Hard delete is blocked while this kit is referenced. Remove those references or use soft delete instead.
+                            </div>
+                        }
+                    }
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary" @onclick="CloseDeleteModal" disabled="@_deleteBusy">Cancel</button>
+                    <button class="btn btn-outline-secondary" @onclick="SoftDeleteAsync" disabled="@(_deleteBusy || _selectedKit is null)">Soft delete</button>
+                    <button class="btn btn-danger" @onclick="HardDeleteAsync" disabled="@(_deleteBusy || _deleteProbe is null || !_deleteProbe.Deletable)">Hard delete</button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private readonly string[] _tabs = new[] { "Details", "Components", "Categories", "Fitment", "Offerings", "Preview" };
+
+    private bool _loading = true;
+    private string _search = string.Empty;
+    private string _brand = string.Empty;
+    private string? _globalError;
+    private string? _globalInfo;
+
+    private List<AdminPartSummary> _kits = new();
+    private PartDetailResponse? _selectedKit;
+
+    private string _activeTab = "Components";
+
+    private AdminPartUpdateRequest _detailsForm = new();
+    private string? _detailsError;
+
+    private List<LeafCategoryRow> _leafCategories = new();
+    private string _categorySearch = string.Empty;
+    private string? _categoryError;
+
+    private FitmentForm _fitmentForm = new();
+    private string? _fitmentError;
+
+    private OfferingForm _offeringForm = new();
+    private string? _offeringError;
+
+    private string? _componentError;
+    private string? _componentSaveError;
+    private List<KitComponentEditState> _componentEdits = new();
+    private decimal _componentTotal;
+    private bool _componentsDirty;
+    private bool _componentSaving;
+    private readonly string[] _availabilityOptions = new[] { "in_stock", "backorder", "discontinued", "unknown" };
+    private List<VendorOption> _vendors = new();
+    private bool? _validationOk;
+    private List<string> _validationMessages = new();
+    private string? _componentInfoMessage;
+    private const string CustomVendorValue = "__custom__";
+
+    private bool _componentModalOpen;
+    private string _componentModalTab = "existing";
+    private string _componentSearchQuery = string.Empty;
+    private List<ComponentSearchRow> _componentSearchResults = new();
+    private ComponentSearchRow? _selectedSearchPart;
+    private decimal _componentModalQty = 1m;
+    private string? _componentModalError;
+    private NewPartForm _newPartForm = new();
+
+    private bool _kitSaving;
+    private string? _kitPriceMessage;
+    private string? _kitPriceError;
+    private long? _kitVendorId;
+    private string _kitVendorName = string.Empty;
+    private decimal _kitPrice;
+    private string _kitCurrency = "USD";
+    private string _kitAvailability = "in_stock";
+    private string _kitUrl = string.Empty;
+
+    private bool _showDeleteModal;
+    private bool _deleteBusy;
+    private DeleteProbe? _deleteProbe;
+    private string? _deleteError;
+
+    private bool IsKitVendorCustom => !_kitVendorId.HasValue || _kitVendorId <= 0;
+    private string KitVendorSelectValue => IsKitVendorCustom || !_kitVendorId.HasValue ? CustomVendorValue : _kitVendorId.Value.ToString(CultureInfo.InvariantCulture);
+
+    protected override async Task OnInitializedAsync()
+    {
+        await Session.HydrateAsync();
+        if (!Session.IsAdmin)
+        {
+            _loading = false;
+            return;
+        }
+
+        await LoadKitsAsync();
+        _loading = false;
+    }
+
+    private async Task LoadKitsAsync()
+    {
+        try
+        {
+            var parts = new List<string>();
+            if (!string.IsNullOrWhiteSpace(_search))
+            {
+                parts.Add($"q={Uri.EscapeDataString(_search)}");
+            }
+            if (!string.IsNullOrWhiteSpace(_brand))
+            {
+                parts.Add($"brand={Uri.EscapeDataString(_brand)}");
+            }
+
+            var url = "/api/admin/kits";
+            if (parts.Count > 0)
+            {
+                url += "?" + string.Join("&", parts);
+            }
+
+            _kits = await Http.GetFromJsonAsync<List<AdminPartSummary>>(url) ?? new();
+        }
+        catch (Exception ex)
+        {
+            _globalError = ex.Message;
+        }
+        StateHasChanged();
+    }
+
+    private async Task LoadKitAsync(long partId)
+    {
+        try
+        {
+            _globalInfo = null;
+            _deleteError = null;
+            _deleteProbe = null;
+            _showDeleteModal = false;
+
+            _selectedKit = await Http.GetFromJsonAsync<PartDetailResponse>($"/api/admin/parts/{partId}");
+            if (_selectedKit?.Part is null)
+            {
+                _globalError = "Kit not found.";
+                return;
+            }
+
+            _detailsForm = new AdminPartUpdateRequest
+            {
+                Sku = _selectedKit.Part.Sku,
+                Name = _selectedKit.Part.Name,
+                BrandName = _selectedKit.Part.BrandName,
+                Status = _selectedKit.Part.Status,
+                IsKit = _selectedKit.Part.IsKit,
+                Uom = _selectedKit.Part.Uom,
+                PiecesPerUnit = _selectedKit.Part.PiecesPerUnit,
+                Description = _selectedKit.Part.Description,
+                ImageUrl = _selectedKit.Part.ImageUrl
+            };
+
+            _componentError = null;
+            _componentInfoMessage = null;
+            _componentSaveError = null;
+            _componentsDirty = false;
+            _componentSaving = false;
+            _validationOk = null;
+            _validationMessages = new List<string>();
+            _kitSaving = false;
+            _kitPriceMessage = null;
+            _kitPriceError = null;
+
+            _componentModalOpen = false;
+            _componentModalTab = "existing";
+            _componentSearchQuery = string.Empty;
+            _componentSearchResults = new List<ComponentSearchRow>();
+            _selectedSearchPart = null;
+            _componentModalQty = 1m;
+            _componentModalError = null;
+            _newPartForm = new NewPartForm();
+
+            await LoadLeafCategoriesAsync();
+            await RefreshComponentEditorAsync();
+        }
+        catch (Exception ex)
+        {
+            _globalError = ex.Message;
+        }
+
+        StateHasChanged();
+    }
+
+    private async Task RefreshCurrentKitAsync()
+    {
+        if (_selectedKit?.Part is null) return;
+        await LoadKitAsync(_selectedKit.Part.PartId);
+        await LoadKitsAsync();
+    }
+
+    private void SwitchTab(string tab)
+    {
+        _activeTab = tab;
+        StateHasChanged();
+    }
+
+    private async Task OnSearchChanged(ChangeEventArgs e)
+    {
+        _search = e.Value?.ToString() ?? string.Empty;
+        await LoadKitsAsync();
+    }
+
+    private async Task OnBrandChanged(ChangeEventArgs e)
+    {
+        _brand = e.Value?.ToString() ?? string.Empty;
+        await LoadKitsAsync();
+    }
+
+    private async Task SaveDetailsAsync()
+    {
+        if (_selectedKit?.Part is null) return;
+
+        try
+        {
+            var response = await Http.PatchAsJsonAsync($"/api/admin/parts/{_selectedKit.Part.PartId}", _detailsForm);
+            if (!response.IsSuccessStatusCode)
+            {
+                _detailsError = await response.Content.ReadAsStringAsync();
+                return;
+            }
+
+            _detailsError = null;
+            await RefreshCurrentKitAsync();
+        }
+        catch (Exception ex)
+        {
+            _detailsError = ex.Message;
+        }
+    }
+
+    private void OnDetailsPiecesChanged(ChangeEventArgs e)
+    {
+        if (decimal.TryParse(e.Value?.ToString(), out var value))
+        {
+            _detailsForm.PiecesPerUnit = value;
+        }
+        else
+        {
+            _detailsForm.PiecesPerUnit = null;
+        }
+    }
+
+    private void OnDetailsKitChanged(ChangeEventArgs e)
+    {
+        _detailsForm.IsKit = e.Value switch
+        {
+            bool b => b,
+            string s => string.Equals(s, "true", StringComparison.OrdinalIgnoreCase) || string.Equals(s, "on", StringComparison.OrdinalIgnoreCase),
+            _ => _detailsForm.IsKit ?? false
+        };
+    }
+
+    private async Task LoadLeafCategoriesAsync()
+    {
+        var url = string.IsNullOrWhiteSpace(_categorySearch)
+            ? "/api/admin/categories/leaf"
+            : $"/api/admin/categories/leaf?q={Uri.EscapeDataString(_categorySearch)}";
+        try
+        {
+            _leafCategories = await Http.GetFromJsonAsync<List<LeafCategoryRow>>(url) ?? new();
+        }
+        catch
+        {
+            _leafCategories = new();
+        }
+    }
+
+    private async Task SearchCategoriesAsync(ChangeEventArgs e)
+    {
+        _categorySearch = e.Value?.ToString() ?? string.Empty;
+        await LoadLeafCategoriesAsync();
+        StateHasChanged();
+    }
+
+    private async Task AddCategoryAsync(long categoryId, bool primary)
+    {
+        if (_selectedKit?.Part is null) return;
+
+        try
+        {
+            var payload = new AdminPartCategoryRequest
+            {
+                CategoryId = categoryId,
+                IsPrimary = primary
+            };
+            var response = await Http.PostAsJsonAsync($"/api/admin/parts/{_selectedKit.Part.PartId}/categories", payload);
+            if (!response.IsSuccessStatusCode)
+            {
+                _categoryError = await response.Content.ReadAsStringAsync();
+                return;
+            }
+            _categoryError = null;
+            await RefreshCurrentKitAsync();
+        }
+        catch (Exception ex)
+        {
+            _categoryError = ex.Message;
+        }
+    }
+
+    private async Task MakePrimaryAsync(long categoryId)
+    {
+        if (_selectedKit?.Categories is null) return;
+        await AddCategoryAsync(categoryId, true);
+        foreach (var cat in _selectedKit.Categories.Where(c => c.CategoryId != categoryId))
+        {
+            await Http.PostAsJsonAsync($"/api/admin/parts/{_selectedKit.Part!.PartId}/categories", new AdminPartCategoryRequest
+            {
+                CategoryId = cat.CategoryId,
+                IsPrimary = false
+            });
+        }
+        await RefreshCurrentKitAsync();
+    }
+
+    private async Task RemoveCategoryAsync(long categoryId)
+    {
+        if (_selectedKit?.Part is null) return;
+        try
+        {
+            var response = await Http.DeleteAsync($"/api/admin/parts/{_selectedKit.Part.PartId}/categories/{categoryId}");
+            if (!response.IsSuccessStatusCode)
+            {
+                _categoryError = await response.Content.ReadAsStringAsync();
+                return;
+            }
+            _categoryError = null;
+            await RefreshCurrentKitAsync();
+        }
+        catch (Exception ex)
+        {
+            _categoryError = ex.Message;
+        }
+    }
+
+    private async Task AddFitmentAsync()
+    {
+        if (_selectedKit?.Part is null) return;
+        if (string.IsNullOrWhiteSpace(_fitmentForm.EngineCode))
+        {
+            _fitmentError = "Enter an engine code.";
+            return;
+        }
+
+        try
+        {
+            var payload = new AdminPartFitmentRequest
+            {
+                EngineCode = _fitmentForm.EngineCode,
+                YearsStart = _fitmentForm.YearsStart,
+                YearsEnd = _fitmentForm.YearsEnd,
+                Notes = _fitmentForm.Notes
+            };
+            var response = await Http.PostAsJsonAsync($"/api/admin/parts/{_selectedKit.Part.PartId}/fitment", payload);
+            if (!response.IsSuccessStatusCode)
+            {
+                _fitmentError = await response.Content.ReadAsStringAsync();
+                return;
+            }
+
+            _fitmentError = null;
+            _fitmentForm = new FitmentForm();
+            await RefreshCurrentKitAsync();
+        }
+        catch (Exception ex)
+        {
+            _fitmentError = ex.Message;
+        }
+    }
+
+    private void OnFitmentStartChanged(ChangeEventArgs e)
+    {
+        if (short.TryParse(e.Value?.ToString(), out var value))
+        {
+            _fitmentForm.YearsStart = value;
+        }
+        else
+        {
+            _fitmentForm.YearsStart = null;
+        }
+    }
+
+    private void OnFitmentEndChanged(ChangeEventArgs e)
+    {
+        if (short.TryParse(e.Value?.ToString(), out var value))
+        {
+            _fitmentForm.YearsEnd = value;
+        }
+        else
+        {
+            _fitmentForm.YearsEnd = null;
+        }
+    }
+
+    private async Task DeleteFitmentAsync(long fitmentId)
+    {
+        if (_selectedKit?.Part is null) return;
+        try
+        {
+            var response = await Http.DeleteAsync($"/api/admin/parts/{_selectedKit.Part.PartId}/fitment/{fitmentId}");
+            if (!response.IsSuccessStatusCode)
+            {
+                _fitmentError = await response.Content.ReadAsStringAsync();
+                return;
+            }
+
+            _fitmentError = null;
+            await RefreshCurrentKitAsync();
+        }
+        catch (Exception ex)
+        {
+            _fitmentError = ex.Message;
+        }
+    }
+
+    private async Task AddOfferingAsync()
+    {
+        if (_selectedKit?.Part is null) return;
+        if (string.IsNullOrWhiteSpace(_offeringForm.VendorName))
+        {
+            _offeringError = "Enter a vendor.";
+            return;
+        }
+
+        if (_offeringForm.Price < 0)
+        {
+            _offeringError = "Enter a valid price.";
+            return;
+        }
+
+        try
+        {
+            var payload = new AdminPartOfferingRequest
+            {
+                VendorName = _offeringForm.VendorName,
+                Price = _offeringForm.Price,
+                Currency = _offeringForm.Currency,
+                Url = _offeringForm.Url,
+                AffiliateUrl = _offeringForm.AffiliateUrl,
+                Availability = _offeringForm.Availability
+            };
+            var response = await Http.PostAsJsonAsync($"/api/admin/parts/{_selectedKit.Part.PartId}/offerings", payload);
+            if (!response.IsSuccessStatusCode)
+            {
+                _offeringError = await response.Content.ReadAsStringAsync();
+                return;
+            }
+
+            _offeringError = null;
+            _offeringForm = new OfferingForm();
+            await RefreshCurrentKitAsync();
+        }
+        catch (Exception ex)
+        {
+            _offeringError = ex.Message;
+        }
+    }
+
+    private void OnOfferingPriceChanged(ChangeEventArgs e)
+    {
+        if (decimal.TryParse(e.Value?.ToString(), out var value))
+        {
+            _offeringForm.Price = value;
+        }
+    }
+
+    private async Task DeleteOfferingAsync(long offeringId)
+    {
+        if (_selectedKit?.Part is null) return;
+        try
+        {
+            var response = await Http.DeleteAsync($"/api/admin/parts/{_selectedKit.Part.PartId}/offerings/{offeringId}");
+            if (!response.IsSuccessStatusCode)
+            {
+                _offeringError = await response.Content.ReadAsStringAsync();
+                return;
+            }
+
+            _offeringError = null;
+            await RefreshCurrentKitAsync();
+        }
+        catch (Exception ex)
+        {
+            _offeringError = ex.Message;
+        }
+    }
+
+    private void OpenComponentModal()
+    {
+        if (_selectedKit?.Part is null || !_selectedKit.Part.IsKit)
+            return;
+
+        _componentModalOpen = true;
+        _componentModalTab = "existing";
+        _componentModalError = null;
+        _componentSearchQuery = string.Empty;
+        _componentSearchResults = new List<ComponentSearchRow>();
+        _selectedSearchPart = null;
+        _componentModalQty = 1m;
+        _newPartForm = new NewPartForm();
+
+        _ = InvokeAsync(PerformComponentSearchAsync);
+    }
+
+    private void CloseComponentModal()
+    {
+        _componentModalOpen = false;
+        _componentModalError = null;
+        _selectedSearchPart = null;
+    }
+
+    private string GetModalTabClass(string tab) => tab == _componentModalTab ? "nav-link active" : "nav-link";
+
+    private void SwitchComponentModalTab(string tab)
+    {
+        if (string.Equals(_componentModalTab, tab, StringComparison.Ordinal))
+            return;
+
+        _componentModalTab = tab;
+        _componentModalError = null;
+
+        if (tab == "existing")
+        {
+            _ = InvokeAsync(PerformComponentSearchAsync);
+        }
+    }
+
+    private async Task OnComponentSearchChanged(ChangeEventArgs e)
+    {
+        _componentSearchQuery = e.Value?.ToString() ?? string.Empty;
+        await PerformComponentSearchAsync();
+    }
+
+    private async Task PerformComponentSearchAsync()
+    {
+        if (_selectedKit?.Part is null)
+            return;
+
+        try
+        {
+            var query = string.IsNullOrWhiteSpace(_componentSearchQuery)
+                ? string.Empty
+                : $"?q={Uri.EscapeDataString(_componentSearchQuery)}";
+            var url = "/api/admin/parts/search" + query;
+            var result = await Http.GetFromJsonAsync<List<ComponentSearchRow>>(url);
+            _componentSearchResults = result ?? new List<ComponentSearchRow>();
+
+            if (_selectedSearchPart is not null && _componentSearchResults.All(r => r.PartId != _selectedSearchPart.PartId))
+            {
+                _selectedSearchPart = null;
+            }
+        }
+        catch (Exception ex)
+        {
+            _componentModalError = ex.Message;
+        }
+
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private void SelectExistingPart(ComponentSearchRow row)
+    {
+        _selectedSearchPart = row;
+        _componentModalError = null;
+    }
+
+    private void OnComponentModalQtyChanged(ChangeEventArgs e)
+    {
+        if (decimal.TryParse(e.Value?.ToString(), NumberStyles.Number, CultureInfo.InvariantCulture, out var value) && value > 0)
+        {
+            _componentModalQty = value;
+        }
+    }
+
+    private async Task AddExistingComponentAsync()
+    {
+        if (_selectedKit?.Part is null || _selectedSearchPart is null)
+            return;
+
+        if (_componentModalQty <= 0)
+        {
+            _componentModalError = "Quantity must be positive.";
+            return;
+        }
+
+        _componentInfoMessage = null;
+        _componentSaveError = null;
+        _validationOk = null;
+        _validationMessages = new List<string>();
+
+        try
+        {
+            var payload = new { child_sku = _selectedSearchPart.Sku, qty = _componentModalQty };
+            var response = await Http.PostAsJsonAsync($"/api/admin/kits/{_selectedKit.Part.PartId}/components/add-or-create", payload);
+            if (!response.IsSuccessStatusCode)
+            {
+                _componentModalError = await response.Content.ReadAsStringAsync();
+                return;
+            }
+
+            _componentModalOpen = false;
+            _componentModalError = null;
+            _componentError = null;
+            _componentInfoMessage = $"Added {_selectedSearchPart.Sku} × {_componentModalQty}.";
+            await RefreshCurrentKitAsync();
+        }
+        catch (Exception ex)
+        {
+            _componentModalError = ex.Message;
+        }
+    }
+
+    private async Task CreateAndAddComponentAsync()
+    {
+        if (_selectedKit?.Part is null)
+            return;
+
+        var sku = _newPartForm.Sku?.Trim();
+        var name = _newPartForm.Name?.Trim();
+        var categorySlug = _newPartForm.CategorySlug?.Trim().ToLowerInvariant();
+
+        if (string.IsNullOrWhiteSpace(sku) || string.IsNullOrWhiteSpace(name) || string.IsNullOrWhiteSpace(categorySlug))
+        {
+            _componentModalError = "SKU, name, and category are required.";
+            return;
+        }
+
+        if (_componentModalQty <= 0)
+        {
+            _componentModalError = "Quantity must be positive.";
+            return;
+        }
+
+        decimal piecesPerUnit = 1m;
+        if (!string.IsNullOrWhiteSpace(_newPartForm.PiecesPerUnit))
+        {
+            if (!decimal.TryParse(_newPartForm.PiecesPerUnit, NumberStyles.Number, CultureInfo.InvariantCulture, out piecesPerUnit) || piecesPerUnit <= 0)
+            {
+                _componentModalError = "Pieces per unit must be a positive number.";
+                return;
+            }
+        }
+
+        decimal? price = null;
+        if (!string.IsNullOrWhiteSpace(_newPartForm.Price))
+        {
+            if (!decimal.TryParse(_newPartForm.Price, NumberStyles.Number, CultureInfo.InvariantCulture, out var parsedPrice) || parsedPrice < 0)
+            {
+                _componentModalError = "Price must be zero or greater.";
+                return;
+            }
+
+            price = parsedPrice;
+        }
+
+        if (!string.IsNullOrWhiteSpace(_newPartForm.Vendor) && price is null)
+        {
+            _componentModalError = "Provide a price when specifying a vendor.";
+            return;
+        }
+
+        _componentInfoMessage = null;
+        _componentSaveError = null;
+        _validationOk = null;
+        _validationMessages = new List<string>();
+
+        var offering = price.HasValue
+            ? new
+            {
+                vendor_name = string.IsNullOrWhiteSpace(_newPartForm.Vendor) ? "Unknown Vendor" : _newPartForm.Vendor!.Trim(),
+                price = price.Value,
+                currency = "USD",
+                url = string.IsNullOrWhiteSpace(_newPartForm.Url) ? null : _newPartForm.Url!.Trim()
+            }
+            : null;
+
+        var payload = new
+        {
+            new_part = new
+            {
+                sku,
+                name,
+                brand_name = string.IsNullOrWhiteSpace(_newPartForm.Brand) ? null : _newPartForm.Brand!.Trim(),
+                category_slug = categorySlug,
+                pieces_per_unit = piecesPerUnit,
+                status = "active",
+                uom = "each",
+                offering
+            },
+            qty = _componentModalQty
+        };
+
+        try
+        {
+            var response = await Http.PostAsJsonAsync($"/api/admin/kits/{_selectedKit.Part.PartId}/components/add-or-create", payload);
+            if (!response.IsSuccessStatusCode)
+            {
+                _componentModalError = await response.Content.ReadAsStringAsync();
+                return;
+            }
+
+            _componentModalOpen = false;
+            _componentModalError = null;
+            _componentError = null;
+            _componentInfoMessage = $"Created {sku} and added × {_componentModalQty}.";
+            await RefreshCurrentKitAsync();
+        }
+        catch (Exception ex)
+        {
+            _componentModalError = ex.Message;
+        }
+    }
+
+    private async Task DeleteComponentAsync(long childPartId)
+    {
+        if (_selectedKit?.Part is null) return;
+        _componentInfoMessage = null;
+        _componentSaveError = null;
+        _validationOk = null;
+        _validationMessages = new List<string>();
+        try
+        {
+            var response = await Http.DeleteAsync($"/api/admin/kits/{_selectedKit.Part.PartId}/components/{childPartId}");
+            if (!response.IsSuccessStatusCode)
+            {
+                _componentError = await response.Content.ReadAsStringAsync();
+                return;
+            }
+
+            _componentError = null;
+            await RefreshCurrentKitAsync();
+            _componentInfoMessage = "Component removed.";
+        }
+        catch (Exception ex)
+        {
+            _componentError = ex.Message;
+        }
+    }
+
+    private async Task RefreshComponentEditorAsync()
+    {
+        if (_selectedKit?.Part is null)
+        {
+            _componentEdits = new List<KitComponentEditState>();
+            _componentTotal = 0m;
+            _vendors = new List<VendorOption>();
+            return;
+        }
+
+        try
+        {
+            var snapshot = await Http.GetFromJsonAsync<KitEditSnapshot>($"/api/admin/kits/{_selectedKit.Part.PartId}/edit");
+            if (snapshot is null)
+            {
+                _componentSaveError = "Unable to load kit editor.";
+                return;
+            }
+
+            _vendors = snapshot.Vendors ?? new List<VendorOption>();
+            if (_vendors.Count == 0)
+            {
+                _vendors.Add(new VendorOption { VendorId = 0, Name = "Bundle (Virtual)" });
+            }
+
+            var componentDtos = snapshot.Components ?? new List<KitComponentEditDto>();
+
+            _componentEdits = componentDtos.Select(c => new KitComponentEditState
+            {
+                ChildPartId = c.ChildPartId,
+                Sku = c.Sku,
+                Name = c.Name,
+                Qty = c.Qty,
+                Price = c.Price ?? 0m,
+                Currency = string.IsNullOrWhiteSpace(c.Currency) ? "USD" : c.Currency!,
+                Url = c.Url,
+                Availability = string.IsNullOrWhiteSpace(c.Availability) ? "unknown" : c.Availability!,
+                VendorId = c.VendorId,
+                VendorName = c.VendorName ?? string.Empty
+            }).ToList();
+
+            foreach (var row in _componentEdits.Where(r => r.VendorId.HasValue && r.VendorId.Value > 0))
+            {
+                var vendorId = row.VendorId!.Value;
+                if (!_vendors.Any(v => v.VendorId == vendorId))
+                {
+                    var name = string.IsNullOrWhiteSpace(row.VendorName) ? $"Vendor {vendorId}" : row.VendorName;
+                    _vendors.Add(new VendorOption { VendorId = vendorId, Name = name });
+                }
+            }
+
+            if (snapshot.KitOffering is not null)
+            {
+                _kitVendorId = snapshot.KitOffering.VendorId;
+                _kitVendorName = snapshot.KitOffering.VendorName ?? string.Empty;
+                if (_kitVendorId.HasValue && _kitVendorId.Value > 0 && !_vendors.Any(v => v.VendorId == _kitVendorId.Value))
+                {
+                    _vendors.Add(new VendorOption { VendorId = _kitVendorId.Value, Name = string.IsNullOrWhiteSpace(_kitVendorName) ? $"Vendor {_kitVendorId.Value}" : _kitVendorName });
+                }
+
+                _kitPrice = snapshot.KitOffering.Price ?? 0m;
+                _kitCurrency = string.IsNullOrWhiteSpace(snapshot.KitOffering.Currency) ? "USD" : snapshot.KitOffering.Currency!;
+                _kitAvailability = string.IsNullOrWhiteSpace(snapshot.KitOffering.Availability) ? "in_stock" : snapshot.KitOffering.Availability!;
+                _kitUrl = snapshot.KitOffering.Url ?? string.Empty;
+            }
+            else
+            {
+                _kitVendorId = null;
+                if (string.IsNullOrWhiteSpace(_kitVendorName))
+                {
+                    _kitVendorName = "Bundle (Virtual)";
+                }
+                _kitPrice = 0m;
+                _kitCurrency = "USD";
+                _kitAvailability = "in_stock";
+                _kitUrl = string.Empty;
+            }
+
+            _componentsDirty = false;
+            _componentSaving = false;
+            _componentSaveError = null;
+            _componentError = null;
+
+            RecalculateComponentTotal();
+        }
+        catch (Exception ex)
+        {
+            _componentSaveError = ex.Message;
+        }
+    }
+
+    private void RecalculateComponentTotal()
+    {
+        _componentTotal = _componentEdits.Sum(r => r.Qty * r.Price);
+    }
+
+    private void MarkComponentsDirty()
+    {
+        _componentsDirty = true;
+        _componentSaveError = null;
+        _componentError = null;
+        _componentInfoMessage = null;
+        _validationOk = null;
+        _validationMessages = new List<string>();
+    }
+
+    private string GetVendorSelectValue(KitComponentEditState row)
+    {
+        if (row.VendorId.HasValue && row.VendorId.Value > 0)
+            return row.VendorId.Value.ToString(CultureInfo.InvariantCulture);
+        return CustomVendorValue;
+    }
+
+    private void OnComponentQtyInput(KitComponentEditState row, ChangeEventArgs e)
+    {
+        if (decimal.TryParse(e.Value?.ToString(), NumberStyles.Number, CultureInfo.InvariantCulture, out var value) && value > 0)
+        {
+            row.Qty = value;
+            MarkComponentsDirty();
+            RecalculateComponentTotal();
+        }
+    }
+
+    private void OnComponentPriceInput(KitComponentEditState row, ChangeEventArgs e)
+    {
+        if (decimal.TryParse(e.Value?.ToString(), NumberStyles.Number, CultureInfo.InvariantCulture, out var value) && value >= 0)
+        {
+            row.Price = value;
+            MarkComponentsDirty();
+            RecalculateComponentTotal();
+        }
+    }
+
+    private void OnComponentCurrencyInput(KitComponentEditState row, ChangeEventArgs e)
+    {
+        row.Currency = (e.Value?.ToString() ?? "USD").Trim().ToUpperInvariant();
+        MarkComponentsDirty();
+    }
+
+    private void OnComponentVendorChanged(KitComponentEditState row, ChangeEventArgs e)
+    {
+        var value = e.Value?.ToString();
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            row.VendorId = null;
+            row.VendorName = string.Empty;
+        }
+        else if (value == CustomVendorValue)
+        {
+            row.VendorId = null;
+            if (string.IsNullOrWhiteSpace(row.VendorName))
+            {
+                row.VendorName = string.Empty;
+            }
+        }
+        else if (long.TryParse(value, out var vendorId))
+        {
+            row.VendorId = vendorId;
+            var vendor = _vendors.FirstOrDefault(v => v.VendorId == vendorId);
+            row.VendorName = vendor?.Name ?? row.VendorName;
+        }
+
+        MarkComponentsDirty();
+    }
+
+    private void OnComponentVendorNameInput(KitComponentEditState row, ChangeEventArgs e)
+    {
+        row.VendorName = e.Value?.ToString() ?? string.Empty;
+        MarkComponentsDirty();
+    }
+
+    private void OnComponentUrlInput(KitComponentEditState row, ChangeEventArgs e)
+    {
+        row.Url = (e.Value?.ToString() ?? string.Empty).Trim();
+        MarkComponentsDirty();
+    }
+
+    private void OnComponentAvailabilityChanged(KitComponentEditState row, ChangeEventArgs e)
+    {
+        var value = e.Value?.ToString();
+        if (!string.IsNullOrWhiteSpace(value))
+        {
+            row.Availability = value;
+            MarkComponentsDirty();
+        }
+    }
+
+    private async Task SaveComponentPricingAsync()
+    {
+        if (_selectedKit?.Part is null) return;
+
+        _componentError = null;
+        _componentSaveError = null;
+        _componentInfoMessage = null;
+        _componentSaving = true;
+
+        try
+        {
+            if (_componentEdits.Count == 0)
+            {
+                _componentInfoMessage = "No components to save.";
+                _componentsDirty = false;
+                return;
+            }
+
+            foreach (var row in _componentEdits)
+            {
+                row.VendorName = row.VendorName?.Trim() ?? string.Empty;
+                if (row.Qty <= 0)
+                {
+                    _componentSaveError = $"Quantity must be positive for {row.Sku}";
+                    return;
+                }
+
+                if ((!row.VendorId.HasValue || row.VendorId <= 0) && string.IsNullOrWhiteSpace(row.VendorName))
+                {
+                    _componentSaveError = $"Provide a vendor for {row.Sku}.";
+                    return;
+                }
+            }
+
+            var payload = new AdminKitEditRequest
+            {
+                Components = _componentEdits.Select(row => new AdminKitEditComponent
+                {
+                    ChildPartId = row.ChildPartId,
+                    Qty = row.Qty,
+                    Offering = new AdminKitEditOffering
+                    {
+                        VendorId = row.VendorId > 0 ? row.VendorId : null,
+                        VendorName = row.VendorId > 0 ? null : row.VendorName?.Trim(),
+                        Price = row.Price,
+                        Currency = string.IsNullOrWhiteSpace(row.Currency) ? "USD" : row.Currency.Trim().ToUpperInvariant(),
+                        Url = string.IsNullOrWhiteSpace(row.Url) ? null : row.Url,
+                        Availability = string.IsNullOrWhiteSpace(row.Availability) ? "unknown" : row.Availability.Trim()
+                    }
+                }).ToList()
+            };
+
+            var response = await Http.PostAsJsonAsync($"/api/admin/kits/{_selectedKit.Part.PartId}/edit", payload);
+            if (!response.IsSuccessStatusCode)
+            {
+                _componentSaveError = await response.Content.ReadAsStringAsync();
+                return;
+            }
+
+            await RefreshComponentEditorAsync();
+            _componentInfoMessage = "Component pricing saved.";
+            _componentsDirty = false;
+        }
+        catch (Exception ex)
+        {
+            _componentSaveError = ex.Message;
+        }
+        finally
+        {
+            _componentSaving = false;
+        }
+    }
+
+    private async Task ValidateKitAsync()
+    {
+        if (_selectedKit?.Part is null) return;
+
+        _componentInfoMessage = null;
+        _componentError = null;
+
+        try
+        {
+            var result = await Http.GetFromJsonAsync<KitValidateResponse>($"/api/admin/kits/{_selectedKit.Part.PartId}/validate");
+            if (result is null)
+            {
+                _validationOk = null;
+                _validationMessages = new List<string>();
+                _componentError = "Validation failed.";
+                return;
+            }
+
+            _validationOk = result.Ok;
+            _validationMessages = result.Errors ?? new List<string>();
+            if (result.Ok)
+            {
+                _componentError = null;
+                _componentInfoMessage = "Kit validation passed.";
+            }
+            else if (_validationMessages.Count > 0)
+            {
+                _componentInfoMessage = null;
+            }
+        }
+        catch (Exception ex)
+        {
+            _componentError = ex.Message;
+        }
+    }
+
+    private async Task SaveKitPricingAsync()
+    {
+        if (_selectedKit?.Part is null) return;
+
+        _kitPriceError = null;
+        _kitPriceMessage = null;
+        _kitSaving = true;
+
+        try
+        {
+            _kitVendorName = _kitVendorName?.Trim() ?? string.Empty;
+            if (_kitPrice < 0)
+            {
+                _kitPriceError = "Price must be zero or greater.";
+                return;
+            }
+
+            if (IsKitVendorCustom && string.IsNullOrWhiteSpace(_kitVendorName))
+            {
+                _kitPriceError = "Provide a vendor name.";
+                return;
+            }
+
+            var payload = new AdminKitEditRequest
+            {
+                KitOffering = new AdminKitEditOffering
+                {
+                    VendorId = IsKitVendorCustom ? null : _kitVendorId,
+                    VendorName = IsKitVendorCustom ? _kitVendorName : null,
+                    Price = _kitPrice,
+                    Currency = string.IsNullOrWhiteSpace(_kitCurrency) ? "USD" : _kitCurrency.Trim().ToUpperInvariant(),
+                    Url = string.IsNullOrWhiteSpace(_kitUrl) ? null : _kitUrl.Trim(),
+                    Availability = string.IsNullOrWhiteSpace(_kitAvailability) ? "in_stock" : _kitAvailability.Trim()
+                }
+            };
+
+            var response = await Http.PostAsJsonAsync($"/api/admin/kits/{_selectedKit.Part.PartId}/edit", payload);
+            if (!response.IsSuccessStatusCode)
+            {
+                _kitPriceError = await response.Content.ReadAsStringAsync();
+                return;
+            }
+
+            await RefreshComponentEditorAsync();
+            _kitPriceMessage = "Kit price saved.";
+        }
+        catch (Exception ex)
+        {
+            _kitPriceError = ex.Message;
+        }
+        finally
+        {
+            _kitSaving = false;
+        }
+    }
+
+    private async Task SyncKitPriceAsync(decimal marginPercentage, decimal roundTo)
+    {
+        if (_selectedKit?.Part is null) return;
+
+        _kitPriceError = null;
+        _kitPriceMessage = null;
+
+        try
+        {
+            var payload = new AdminKitPriceSyncRequest
+            {
+                MarginPct = marginPercentage,
+                Round = roundTo
+            };
+
+            var response = await Http.PostAsJsonAsync($"/api/admin/kits/{_selectedKit.Part.PartId}/price/sync", payload);
+            if (!response.IsSuccessStatusCode)
+            {
+                _kitPriceError = await response.Content.ReadAsStringAsync();
+                return;
+            }
+
+            var body = await response.Content.ReadFromJsonAsync<KitPriceSyncResponse>();
+
+            await RefreshComponentEditorAsync();
+
+            _kitPriceMessage = body is not null
+                ? $"Synced price to {body.SyncedPrice:C}."
+                : "Kit price synced.";
+        }
+        catch (Exception ex)
+        {
+            _kitPriceError = ex.Message;
+        }
+    }
+
+    private void OnKitVendorChanged(ChangeEventArgs e)
+    {
+        var value = e.Value?.ToString();
+        if (value == CustomVendorValue)
+        {
+            _kitVendorId = null;
+        }
+        else if (long.TryParse(value, out var vendorId))
+        {
+            _kitVendorId = vendorId;
+            var vendor = _vendors.FirstOrDefault(v => v.VendorId == vendorId);
+            _kitVendorName = vendor?.Name ?? _kitVendorName;
+        }
+        else
+        {
+            _kitVendorId = null;
+            _kitVendorName = string.Empty;
+        }
+    }
+
+    private void OnKitVendorNameChanged(ChangeEventArgs e)
+    {
+        _kitVendorName = e.Value?.ToString() ?? string.Empty;
+    }
+
+    private void OnKitPriceChanged(ChangeEventArgs e)
+    {
+        if (decimal.TryParse(e.Value?.ToString(), NumberStyles.Number, CultureInfo.InvariantCulture, out var value) && value >= 0)
+        {
+            _kitPrice = value;
+        }
+    }
+
+    private void OnKitCurrencyChanged(ChangeEventArgs e)
+    {
+        _kitCurrency = (e.Value?.ToString() ?? "USD").Trim().ToUpperInvariant();
+    }
+
+    private void OnKitAvailabilityChanged(ChangeEventArgs e)
+    {
+        var value = e.Value?.ToString();
+        if (!string.IsNullOrWhiteSpace(value))
+        {
+            _kitAvailability = value;
+        }
+    }
+
+    private void OnKitUrlChanged(ChangeEventArgs e)
+    {
+        _kitUrl = (e.Value?.ToString() ?? string.Empty).Trim();
+    }
+
+    private void OpenDeleteModal()
+    {
+        if (_selectedKit?.Part is null) return;
+        _deleteError = null;
+        _deleteProbe = null;
+        _showDeleteModal = true;
+        _ = LoadDeleteProbeAsync(_selectedKit.Part.PartId);
+    }
+
+    private async Task LoadDeleteProbeAsync(long partId)
+    {
+        try
+        {
+            _deleteProbe = await Http.GetFromJsonAsync<DeleteProbe>($"/api/admin/parts/{partId}/can-delete");
+            _deleteError = null;
+        }
+        catch (Exception ex)
+        {
+            _deleteError = ex.Message;
+        }
+        StateHasChanged();
+    }
+
+    private async Task SoftDeleteAsync()
+    {
+        if (_selectedKit?.Part is null || _deleteBusy)
+            return;
+
+        _deleteBusy = true;
+        _globalError = null;
+        _deleteError = null;
+
+        try
+        {
+            var response = await Http.PostAsync($"/api/admin/parts/{_selectedKit.Part.PartId}/soft-delete", null);
+            if (!response.IsSuccessStatusCode)
+            {
+                var message = await ReadResponseMessageAsync(response, "Unable to mark kit as discontinued.");
+                _globalError = message;
+                return;
+            }
+
+            _showDeleteModal = false;
+            _deleteProbe = null;
+            await RefreshCurrentKitAsync();
+            _globalInfo = "Kit marked as discontinued.";
+        }
+        catch (Exception ex)
+        {
+            _globalError = ex.Message;
+        }
+        finally
+        {
+            _deleteBusy = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task HardDeleteAsync()
+    {
+        if (_selectedKit?.Part is null || _deleteBusy)
+            return;
+
+        _deleteBusy = true;
+        _deleteError = null;
+        _globalError = null;
+
+        try
+        {
+            var response = await Http.DeleteAsync($"/api/admin/parts/{_selectedKit.Part.PartId}");
+            if (!response.IsSuccessStatusCode)
+            {
+                var message = await ReadResponseMessageAsync(response, "Unable to delete kit.");
+                _deleteError = message;
+                return;
+            }
+
+            var name = _selectedKit.Part.Name ?? _selectedKit.Part.Sku ?? "Kit";
+            _globalInfo = $"Deleted {name}.";
+            _showDeleteModal = false;
+            _deleteProbe = null;
+            _selectedKit = null;
+            await LoadKitsAsync();
+        }
+        catch (Exception ex)
+        {
+            _deleteError = ex.Message;
+        }
+        finally
+        {
+            _deleteBusy = false;
+            StateHasChanged();
+        }
+    }
+
+    private void CloseDeleteModal()
+    {
+        _showDeleteModal = false;
+        _deleteError = null;
+        _deleteProbe = null;
+    }
+
+    private static async Task<string> ReadResponseMessageAsync(HttpResponseMessage response, string fallback)
+    {
+        try
+        {
+            var text = await response.Content.ReadAsStringAsync();
+            if (!string.IsNullOrWhiteSpace(text))
+            {
+                try
+                {
+                    using var document = JsonDocument.Parse(text);
+                    if (document.RootElement.TryGetProperty("message", out var messageProp) && messageProp.ValueKind == JsonValueKind.String)
+                        return messageProp.GetString()!;
+                    if (document.RootElement.TryGetProperty("error", out var errorProp) && errorProp.ValueKind == JsonValueKind.String)
+                        return errorProp.GetString()!;
+                }
+                catch (JsonException)
+                {
+                    // ignore malformed JSON
+                }
+
+                return text.Length > 200 ? text.Substring(0, 200) + "…" : text;
+            }
+        }
+        catch
+        {
+        }
+
+        return fallback;
+    }
+
+    private class DeleteProbe
+    {
+        [JsonPropertyName("deletable")] public bool Deletable { get; set; }
+        [JsonPropertyName("blockers")] public DeleteProbeBlockers Blockers { get; set; } = new();
+        [JsonPropertyName("info")] public DeleteProbeInfo Info { get; set; } = new();
+    }
+
+    private class DeleteProbeBlockers
+    {
+        [JsonPropertyName("in_builds")] public int InBuilds { get; set; }
+        [JsonPropertyName("used_as_child_in_kits")] public int UsedAsChildInKits { get; set; }
+    }
+
+    private class DeleteProbeInfo
+    {
+        [JsonPropertyName("is_kit")] public bool IsKit { get; set; }
+        [JsonPropertyName("bom_children")] public int BomChildren { get; set; }
+        [JsonPropertyName("categories")] public int Categories { get; set; }
+        [JsonPropertyName("fitment")] public int Fitment { get; set; }
+        [JsonPropertyName("offerings")] public int Offerings { get; set; }
+    }
+
+    private record AdminPartSummary
+    {
+        [JsonPropertyName("part_id")] public long PartId { get; set; }
+        [JsonPropertyName("sku")] public string? Sku { get; set; }
+        [JsonPropertyName("name")] public string Name { get; set; } = string.Empty;
+        [JsonPropertyName("status")] public string Status { get; set; } = string.Empty;
+        [JsonPropertyName("brand_name")] public string? BrandName { get; set; }
+    }
+
+    private class PartDetailResponse
+    {
+        [JsonPropertyName("part")] public PartRow? Part { get; set; }
+        [JsonPropertyName("categories")] public List<PartCategoryRow> Categories { get; set; } = new();
+        [JsonPropertyName("fitment")] public List<PartFitmentRow> Fitment { get; set; } = new();
+        [JsonPropertyName("offerings")] public List<PartOfferingRow> Offerings { get; set; } = new();
+        [JsonPropertyName("components")] public List<PartComponentRow> Components { get; set; } = new();
+    }
+
+    private record PartRow
+    {
+        [JsonPropertyName("part_id")] public long PartId { get; set; }
+        [JsonPropertyName("sku")] public string? Sku { get; set; }
+        [JsonPropertyName("name")] public string Name { get; set; } = string.Empty;
+        [JsonPropertyName("brand_name")] public string? BrandName { get; set; }
+        [JsonPropertyName("status")] public string Status { get; set; } = string.Empty;
+        [JsonPropertyName("is_kit")] public bool IsKit { get; set; }
+        [JsonPropertyName("uom")] public string? Uom { get; set; }
+        [JsonPropertyName("pieces_per_unit")] public decimal? PiecesPerUnit { get; set; }
+        [JsonPropertyName("description")] public string? Description { get; set; }
+        [JsonPropertyName("image_url")] public string? ImageUrl { get; set; }
+    }
+
+    private record PartCategoryRow
+    {
+        [JsonPropertyName("category_id")] public long CategoryId { get; set; }
+        [JsonPropertyName("name")] public string Name { get; set; } = string.Empty;
+        [JsonPropertyName("slug")] public string Slug { get; set; } = string.Empty;
+        [JsonPropertyName("is_primary")] public bool IsPrimary { get; set; }
+    }
+
+    private record PartFitmentRow
+    {
+        [JsonPropertyName("part_fitment_id")] public long PartFitmentId { get; set; }
+        [JsonPropertyName("code")] public string Code { get; set; } = string.Empty;
+        [JsonPropertyName("years_start")] public short? YearsStart { get; set; }
+        [JsonPropertyName("years_end")] public short? YearsEnd { get; set; }
+        [JsonPropertyName("notes")] public string? Notes { get; set; }
+    }
+
+    private record PartOfferingRow
+    {
+        [JsonPropertyName("offering_id")] public long OfferingId { get; set; }
+        [JsonPropertyName("vendor")] public string Vendor { get; set; } = string.Empty;
+        [JsonPropertyName("price")] public decimal? Price { get; set; }
+        [JsonPropertyName("availability")] public string Availability { get; set; } = string.Empty;
+        [JsonPropertyName("url")] public string? Url { get; set; }
+    }
+
+    private record PartComponentRow
+    {
+        [JsonPropertyName("child_part_id")] public long ChildPartId { get; set; }
+        [JsonPropertyName("sku")] public string? Sku { get; set; }
+        [JsonPropertyName("name")] public string Name { get; set; } = string.Empty;
+        [JsonPropertyName("qty_per_parent")] public decimal QtyPerParent { get; set; }
+    }
+
+    private class KitEditSnapshot
+    {
+        [JsonPropertyName("components")] public List<KitComponentEditDto> Components { get; set; } = new();
+        [JsonPropertyName("kit_offering")] public KitOfferingDto? KitOffering { get; set; }
+        [JsonPropertyName("vendors")] public List<VendorOption> Vendors { get; set; } = new();
+    }
+
+    private record KitComponentEditDto
+    {
+        [JsonPropertyName("child_part_id")] public long ChildPartId { get; set; }
+        [JsonPropertyName("sku")] public string? Sku { get; set; }
+        [JsonPropertyName("name")] public string? Name { get; set; }
+        [JsonPropertyName("qty")] public decimal Qty { get; set; }
+        [JsonPropertyName("vendor_id")] public long? VendorId { get; set; }
+        [JsonPropertyName("vendor_name")] public string? VendorName { get; set; }
+        [JsonPropertyName("price")] public decimal? Price { get; set; }
+        [JsonPropertyName("currency")] public string? Currency { get; set; }
+        [JsonPropertyName("url")] public string? Url { get; set; }
+        [JsonPropertyName("availability")] public string? Availability { get; set; }
+    }
+
+    private record KitOfferingDto
+    {
+        [JsonPropertyName("vendor_id")] public long? VendorId { get; set; }
+        [JsonPropertyName("vendor_name")] public string? VendorName { get; set; }
+        [JsonPropertyName("price")] public decimal? Price { get; set; }
+        [JsonPropertyName("currency")] public string? Currency { get; set; }
+        [JsonPropertyName("url")] public string? Url { get; set; }
+        [JsonPropertyName("availability")] public string? Availability { get; set; }
+    }
+
+    private class VendorOption
+    {
+        [JsonPropertyName("vendor_id")] public long VendorId { get; set; }
+        [JsonPropertyName("name")] public string Name { get; set; } = string.Empty;
+    }
+
+    private class KitComponentEditState
+    {
+        public long ChildPartId { get; set; }
+        public string? Sku { get; set; }
+        public string? Name { get; set; }
+        public decimal Qty { get; set; }
+        public decimal Price { get; set; }
+        public string Currency { get; set; } = "USD";
+        public string Availability { get; set; } = "unknown";
+        public string? Url { get; set; }
+        public long? VendorId { get; set; }
+        public string VendorName { get; set; } = string.Empty;
+    }
+
+    private class KitValidateResponse
+    {
+        [JsonPropertyName("ok")] public bool Ok { get; set; }
+        [JsonPropertyName("errors")] public List<string>? Errors { get; set; }
+    }
+
+    private class KitPriceSyncResponse
+    {
+        [JsonPropertyName("rollup")] public decimal Rollup { get; set; }
+        [JsonPropertyName("synced_price")] public decimal SyncedPrice { get; set; }
+        [JsonPropertyName("vendor_id")] public long VendorId { get; set; }
+    }
+
+    private record LeafCategoryRow
+    {
+        [JsonPropertyName("category_id")] public long CategoryId { get; set; }
+        [JsonPropertyName("name")] public string Name { get; set; } = string.Empty;
+        [JsonPropertyName("slug")] public string Slug { get; set; } = string.Empty;
+    }
+
+    private class FitmentForm
+    {
+        public string EngineCode { get; set; } = string.Empty;
+        public short? YearsStart { get; set; }
+        public short? YearsEnd { get; set; }
+        public string? Notes { get; set; }
+    }
+
+    private class OfferingForm
+    {
+        public string VendorName { get; set; } = string.Empty;
+        public decimal Price { get; set; }
+        public string Currency { get; set; } = "USD";
+        public string? Url { get; set; }
+        public string? AffiliateUrl { get; set; }
+        public string? Availability { get; set; } = "in_stock";
+    }
+
+    private class ComponentSearchRow
+    {
+        [JsonPropertyName("part_id")] public long PartId { get; set; }
+        [JsonPropertyName("sku")] public string Sku { get; set; } = string.Empty;
+        [JsonPropertyName("name")] public string Name { get; set; } = string.Empty;
+        [JsonPropertyName("best_price")] public decimal? BestPrice { get; set; }
+    }
+
+    private class NewPartForm
+    {
+        public string Sku { get; set; } = string.Empty;
+        public string Name { get; set; } = string.Empty;
+        public string Brand { get; set; } = "RotorBase";
+        public string CategorySlug { get; set; } = string.Empty;
+        public string PiecesPerUnit { get; set; } = "1";
+        public string Vendor { get; set; } = string.Empty;
+        public string Price { get; set; } = string.Empty;
+        public string Url { get; set; } = string.Empty;
+    }
+}

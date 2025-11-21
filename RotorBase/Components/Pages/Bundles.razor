@@ -1,0 +1,463 @@
+@page "/bundles"
+@rendermode InteractiveServer
+@using System.Globalization
+@using System.Linq
+@using System.Net
+@using RotorBase
+@inject HttpClient Http
+@inject NavigationManager Nav
+@inject CompareTrayService Compare
+@inject UserSession Session
+@inject ToastService Toast
+<PageTitle>Bundles &amp; Kits</PageTitle>
+
+<div class="relative min-h-[calc(100vh-4rem)] bg-background text-foreground">
+  <div aria-hidden="true" class="pointer-events-none absolute inset-x-0 top-0 h-32 bg-grid opacity-[.12]"></div>
+
+  <section class="container relative z-10 py-6">
+    <div class="mb-5 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+      <div>
+        <h1 class="text-2xl font-bold tracking-tight md:text-3xl">Bundles &amp; Kits</h1>
+        <p class="text-sm text-foreground/70">Ready-made kits to speed up your build.</p>
+      </div>
+      <a class="btn btn-ghost" href="/shop">Back to shop</a>
+    </div>
+
+    <form class="card mb-6 grid grid-cols-1 gap-4 p-4 md:grid-cols-12 md:p-5"
+          @onsubmit="OnFilterSubmit" @onsubmit:preventDefault>
+      <div class="md:col-span-4">
+        <label for="bundle-search" class="label">Search</label>
+        <input id="bundle-search" class="input" placeholder="Search kits" @bind="Search" />
+      </div>
+
+      <div class="md:col-span-3">
+        <label for="bundle-engine" class="label">Engine</label>
+        <input id="bundle-engine" class="input" placeholder="e.g. 13B-REW-S6" @bind="Engine" />
+      </div>
+
+      <div class="md:col-span-3">
+        <label for="bundle-category" class="label">Category slug</label>
+        <input id="bundle-category" class="input" placeholder="rotors-and-seals" @bind="Category" />
+      </div>
+
+      <div class="md:col-span-2">
+        <label for="bundle-sort" class="label">Sort</label>
+        <select id="bundle-sort" class="input" @bind="Sort">
+          <option value="pop">Most recent</option>
+          <option value="price">Lowest price</option>
+        </select>
+      </div>
+
+      <div class="md:col-span-12">
+        <div class="flex flex-wrap gap-2">
+          <button type="submit" class="btn btn-primary" disabled="@IsLoading">Apply</button>
+          <button type="button" class="btn btn-ghost" @onclick="ClearFilters" disabled="@IsLoading">Clear</button>
+        </div>
+      </div>
+    </form>
+
+    @if (!string.IsNullOrEmpty(SuccessMessage))
+    {
+      <div class="mb-4 card px-3 py-2 ring-1 ring-success/25 bg-success/5 text-success">@SuccessMessage</div>
+    }
+    @if (!string.IsNullOrEmpty(Notification))
+    {
+      <div class="mb-4 card px-3 py-2 ring-1 ring-info/25 bg-info/5 text-info">@Notification</div>
+    }
+
+    @if (IsLoading)
+    {
+      <div class="card mb-4 px-3 py-2">
+        <div class="flex items-center gap-2 text-sm">
+          <svg class="h-4 w-4 animate-spin" viewBox="0 0 24 24">
+            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4A4 4 0 004 12z"></path>
+          </svg>
+          <span>Loading…</span>
+        </div>
+      </div>
+    }
+    else if (!string.IsNullOrEmpty(ErrorMessage))
+    {
+      <div class="card mb-4 px-3 py-2 ring-1 ring-danger/25 bg-danger/5 text-danger">@ErrorMessage</div>
+    }
+    else if (Rows.Count == 0)
+    {
+      <div class="card px-4 py-3 text-sm text-foreground/70">
+        No kits found. Try broadening your search.
+      </div>
+    }
+    else
+    {
+      <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        @foreach (var bundle in Rows)
+        {
+          <KitCard PartId="@bundle.part_id"
+                   Sku="@bundle.sku"
+                   Name="@bundle.name"
+                   Brand="@bundle.brand"
+                   ImageUrl="@bundle.image_url"
+                   BestPrice="@bundle.best_price"
+                   FitsEngine="@bundle.fits_engine"
+                   EngineCode="@EngineDisplay"
+                   AddToBuildRequested="HandleAddToBuildAsync"
+                   OnCompare="AddToCompare" />
+        }
+      </div>
+    }
+  </section>
+</div>
+
+@if (ShowBuildPicker)
+{
+  <div class="fixed inset-0 z-40 bg-background/60 backdrop-blur-sm"></div>
+  <div class="fixed inset-0 z-50 grid place-items-center p-4">
+    <div class="card w-full max-w-md overflow-hidden">
+      <div class="flex items-center justify-between border-b border-border/60 px-4 py-3">
+        <h5 class="text-base font-semibold">Add kit to build</h5>
+        <button type="button" class="btn btn-ghost h-8 px-2"
+                aria-label="Close" @onclick="CloseBuildPicker" disabled="@BuildPickerSubmitting">✕</button>
+      </div>
+
+      <div class="space-y-3 p-4">
+        @if (BuildPickerLoading)
+        {
+          <div class="flex items-center gap-2 text-sm">
+            <svg class="h-4 w-4 animate-spin" viewBox="0 0 24 24">
+              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+              <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4A4 4 0 004 12z"></path>
+            </svg>
+            <span>Loading…</span>
+          </div>
+        }
+        else if (BuildPickerError is not null)
+        {
+          <div class="card px-3 py-2 ring-1 ring-danger/25 bg-danger/5 text-danger" role="alert">@BuildPickerError</div>
+        }
+        else if (PendingSelection is not null)
+        {
+          <div>
+            <label class="label">Build</label>
+            <select class="input" @bind="SelectedBuildId">
+              @foreach (var build in BuildOptions)
+              {
+                <option value="@build.BuildId">@build.Name</option>
+              }
+            </select>
+          </div>
+
+          @if (PendingSelection.Categories.Count > 0)
+          {
+            <div>
+              <label class="label">Category</label>
+              <select class="input" @bind="SelectedCategoryId">
+                @foreach (var cat in PendingSelection.Categories)
+                {
+                  <option value="@cat.CategoryId">@cat.Name</option>
+                }
+              </select>
+            </div>
+          }
+          else
+          {
+            <div class="card px-3 py-2 text-sm ring-1 ring-info/25 bg-info/5 text-info" role="alert">
+              This kit will use its primary category automatically.
+            </div>
+          }
+
+          <div class="text-sm"><strong>Kit:</strong> @PendingSelection.PartName</div>
+        }
+        else
+        {
+          <div class="text-sm text-foreground/70">Select a kit to continue.</div>
+        }
+      </div>
+
+      <div class="flex justify-end gap-2 border-t border-border/60 px-4 py-3">
+        <button class="btn btn-ghost"
+                @onclick="CloseBuildPicker" disabled="@BuildPickerSubmitting">Cancel</button>
+        <button class="btn btn-primary"
+                @onclick="SubmitAddToBuildAsync"
+                disabled="@(BuildPickerSubmitting || BuildPickerLoading || PendingSelection is null)">
+          @(BuildPickerSubmitting ? "Adding…" : "Add")
+        </button>
+      </div>
+    </div>
+  </div>
+}
+
+@code {
+  private List<BundleRow> Rows { get; set; } = new();
+  private bool IsLoading;
+  private string? ErrorMessage;
+  private string? Notification;
+  private string? SuccessMessage;
+
+  private string? Search;
+  private string? Engine;
+  private string? Category;
+  private string Sort = "pop";
+
+  private string? EngineDisplay => string.IsNullOrWhiteSpace(Engine) ? null : Engine.Trim();
+
+  private List<BuildSummaryDto> BuildOptions { get; set; } = new();
+  private bool BuildOptionsLoaded;
+  private bool ShowBuildPicker;
+  private bool BuildPickerLoading;
+  private bool BuildPickerSubmitting;
+  private string? BuildPickerError;
+  private BuildSelectionContext? PendingSelection;
+  private long? SelectedBuildId;
+  private long? SelectedCategoryId;
+
+  protected override async Task OnInitializedAsync()
+  {
+    await Compare.InitializeAsync();
+    await LoadAsync();
+  }
+
+  private async Task OnFilterSubmit()
+  {
+    await LoadAsync();
+  }
+
+  private async Task LoadAsync()
+  {
+    IsLoading = true;
+    ErrorMessage = null;
+    Notification = null;
+
+    try
+    {
+      var queryParts = new List<string>();
+      if (!string.IsNullOrWhiteSpace(Engine))
+        queryParts.Add($"engine={Uri.EscapeDataString(Engine.Trim())}");
+      if (!string.IsNullOrWhiteSpace(Category))
+        queryParts.Add($"category={Uri.EscapeDataString(Category.Trim())}");
+      if (!string.IsNullOrWhiteSpace(Search))
+        queryParts.Add($"q={Uri.EscapeDataString(Search.Trim())}");
+      if (!string.IsNullOrWhiteSpace(Sort))
+        queryParts.Add($"sort={Uri.EscapeDataString(Sort)}");
+
+      var url = "/api/bundles";
+      if (queryParts.Count > 0)
+      {
+        url += "?" + string.Join('&', queryParts);
+      }
+
+      Rows = await Http.GetFromJsonAsync<List<BundleRow>>(url) ?? new List<BundleRow>();
+    }
+    catch (HttpRequestException ex)
+    {
+      ErrorMessage = $"Server error: {ex.Message}";
+    }
+    catch (Exception ex)
+    {
+      ErrorMessage = ex.Message;
+    }
+    finally
+    {
+      IsLoading = false;
+    }
+  }
+
+  private Task HandleAddToBuildAsync(ShopCardAddRequest request) => AddToBuild(request.PartId, request.Sku);
+
+  private async Task AddToBuild(long partId, string? sku = null)
+  {
+    ErrorMessage = null;
+    Notification = null;
+    SuccessMessage = null;
+
+    if (!Session.IsSignedIn)
+    {
+      ErrorMessage = "Sign in to add kits to a build.";
+      return;
+    }
+
+    await EnsureBuildOptionsAsync();
+    if (BuildOptions.Count == 0)
+    {
+      ErrorMessage = "Create a build first to add kits.";
+      return;
+    }
+
+    BuildPickerLoading = true;
+    BuildPickerError = null;
+    ShowBuildPicker = true;
+    PendingSelection = null;
+    SelectedCategoryId = null;
+
+    try
+    {
+      var key = !string.IsNullOrWhiteSpace(sku)
+        ? sku!
+        : partId.ToString(CultureInfo.InvariantCulture);
+
+      var detail = await Http.GetFromJsonAsync<ShopPartMeta>($"/api/shop/parts/{key}");
+      if (detail is null)
+      {
+        BuildPickerError = "Unable to load kit details.";
+        return;
+      }
+
+      var categories = detail.Categories ?? new List<CategorySummary>();
+      var ordered = categories
+        .OrderByDescending(c => c.IsPrimary)
+        .ThenBy(c => c.Name)
+        .ToList();
+
+      PendingSelection = new BuildSelectionContext(partId, detail.Part?.Name ?? key, ordered);
+      SelectedCategoryId = ordered.FirstOrDefault()?.CategoryId;
+      SelectedBuildId ??= BuildOptions.FirstOrDefault()?.BuildId;
+    }
+    catch (HttpRequestException ex) when (ex.StatusCode == HttpStatusCode.NotFound)
+    {
+      BuildPickerError = "Kit record not found.";
+    }
+    catch (Exception ex)
+    {
+      BuildPickerError = ex.Message;
+    }
+    finally
+    {
+      BuildPickerLoading = false;
+      StateHasChanged();
+    }
+  }
+
+  private async Task AddToCompare(string sku)
+  {
+    if (string.IsNullOrWhiteSpace(sku))
+      return;
+
+    var added = await Compare.AddAsync(sku);
+    Notification = added
+      ? $"Added {sku} to compare."
+      : $"{sku} is already in the compare tray.";
+  }
+
+  private async Task ClearFilters()
+  {
+    Search = null;
+    Engine = null;
+    Category = null;
+    Sort = "pop";
+    await LoadAsync();
+  }
+
+  private async Task EnsureBuildOptionsAsync()
+  {
+    if (BuildOptionsLoaded || BuildPickerLoading)
+    {
+      return;
+    }
+
+    BuildPickerLoading = true;
+    BuildPickerError = null;
+
+    try
+    {
+      var result = await Http.GetFromJsonAsync<List<BuildSummaryDto>>("/api/builds?page_size=200&include_archived=false&include_shared=true");
+      BuildOptions = result?.Where(b => !b.IsArchived)
+                       .OrderByDescending(b => b.UpdatedAt)
+                       .ToList() ?? new List<BuildSummaryDto>();
+      BuildOptionsLoaded = true;
+      if (BuildOptions.Count > 0 && SelectedBuildId is null)
+      {
+        SelectedBuildId = BuildOptions[0].BuildId;
+      }
+    }
+    catch (Exception ex)
+    {
+      BuildPickerError = ex.Message;
+    }
+    finally
+    {
+      BuildPickerLoading = false;
+    }
+  }
+
+  private async Task SubmitAddToBuildAsync()
+  {
+    if (PendingSelection is null || SelectedBuildId is null)
+    {
+      BuildPickerError = "Select a build.";
+      return;
+    }
+
+    BuildPickerSubmitting = true;
+    BuildPickerError = null;
+
+    try
+    {
+      var payload = new BuildAddPartRequest
+      {
+        PartId = PendingSelection.PartId,
+        Qty = 1m,
+        CategoryId = SelectedCategoryId
+      };
+
+      var response = await Http.PostAsJsonAsync($"/api/builds/{SelectedBuildId}/add-part", payload);
+      if (!response.IsSuccessStatusCode)
+      {
+        BuildPickerError = await ReadErrorMessageAsync(response, "Unable to add kit to build.");
+        return;
+      }
+
+      ShowBuildPicker = false;
+      SuccessMessage = $"Added {PendingSelection.PartName} to build.";
+    }
+    catch (HttpRequestException ex) when (ex.StatusCode == HttpStatusCode.Unauthorized)
+    {
+      BuildPickerError = "Sign in to add kits.";
+    }
+    catch (Exception ex)
+    {
+      BuildPickerError = ex.Message;
+    }
+    finally
+    {
+      BuildPickerSubmitting = false;
+      PendingSelection = null;
+    }
+  }
+
+  private void CloseBuildPicker()
+  {
+    ShowBuildPicker = false;
+    BuildPickerError = null;
+    BuildPickerLoading = false;
+    BuildPickerSubmitting = false;
+    PendingSelection = null;
+  }
+
+  private static async Task<string> ReadErrorMessageAsync(HttpResponseMessage response, string fallback)
+  {
+    try
+    {
+      var body = await response.Content.ReadAsStringAsync();
+      if (!string.IsNullOrWhiteSpace(body))
+      {
+        return body;
+      }
+    }
+    catch
+    {
+      // ignore
+    }
+
+    return fallback;
+  }
+
+  private class BundleRow
+  {
+    public long part_id { get; set; }
+    public string sku { get; set; } = string.Empty;
+    public string name { get; set; } = string.Empty;
+    public string brand { get; set; } = string.Empty;
+    public string? image_url { get; set; }
+    public decimal? best_price { get; set; }
+    public bool fits_engine { get; set; }
+  }
+}

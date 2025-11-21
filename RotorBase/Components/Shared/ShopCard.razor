@@ -1,0 +1,319 @@
+@using System.Globalization
+@using System.Net
+@using System.Net.Http.Json
+@using System.Text.Json.Serialization
+@inject HttpClient Http
+@inject UserSession Session
+@rendermode InteractiveServer
+
+<div class="group/card card flex h-full flex-col overflow-hidden p-0 transition
+            hover:shadow-lg focus-within:shadow-lg ring-1 ring-border/60
+            hover:ring-primary/25 focus-within:ring-2 focus-within:ring-primary/50">
+  <!-- Top: media + meta -->
+  <div class="flex items-start gap-3 p-4">
+    <div class="relative">
+      <img src="@ImageSource"
+           alt="@Name"
+           decoding="async"
+           loading="lazy"
+           fetchpriority="low"
+           class="h-16 w-16 rounded-md object-cover bg-muted ring-1 ring-border/60"
+           onerror="this.onerror=null;this.src='@PlaceholderImageDataUri';" />
+      @if (IsKit)
+      {
+        <span class="absolute -right-1 -top-1 badge bg-secondary/15 text-secondary ring-secondary/25">Kit</span>
+      }
+    </div>
+
+    <div class="min-w-0 flex-1">
+      <div class="text-[11px] uppercase tracking-wide text-foreground/60">@Brand</div>
+      <a class="block truncate text-sm font-semibold text-foreground hover:text-primary transition"
+         href="@PartUrl" title="@Name">@Name</a>
+      @if (!string.IsNullOrWhiteSpace(CategoryName))
+      {
+        <div class="truncate text-[11px] text-foreground/55">@CategoryName</div>
+      }
+      <p class="truncate text-[12px] text-foreground/55">@Sku</p>
+
+      <div class="mt-2 flex flex-wrap gap-1">
+        @if (FitsEngine && !string.IsNullOrWhiteSpace(EngineCode))
+        {
+          <span class="badge bg-success/10 text-success ring-success/20">Fits @EngineCode</span>
+        }
+      </div>
+    </div>
+  </div>
+
+  <!-- Bottom: price + actions -->
+  <div class="px-4 pb-4">
+    @if (BestPrice is not null)
+    {
+      <div class="text-lg font-semibold text-foreground tabular-nums">@FormatPrice(BestPrice.Value)</div>
+    }
+    else
+    {
+      <span class="badge bg-muted text-foreground/70 ring-border/60">Request quote</span>
+    }
+
+    <div class="mt-3 flex flex-wrap items-center gap-2">
+      <button class="btn btn-soft h-9 px-3"
+              disabled="@AddBusy"
+              aria-busy="@AddBusy"
+              @onclick="AddToBuildAsync">
+        @(AddBusy ? "Opening…" : "Add to build")
+      </button>
+
+      <a class="btn btn-ghost h-9 px-3" href="@PartUrl" aria-label="View @Name">View</a>
+
+      @if (BestPrice is not null)
+      {
+        <a class="btn btn-primary h-9 px-3"
+           href="@BuyHref" target="_blank" rel="noopener noreferrer"
+           aria-label="Buy @Name">
+          Buy
+        </a>
+      }
+      else
+      {
+        <button class="btn btn-ghost h-9 px-3"
+                @onclick="OpenAlert"
+                aria-haspopup="dialog"
+                aria-controls="price-alert-@PartId">
+          Price alert
+        </button>
+      }
+
+      <div class="relative">
+        <button class="btn btn-ghost h-9 px-3"
+                disabled="@string.IsNullOrWhiteSpace(Sku) || !OnCompare.HasDelegate"
+                @onclick="TriggerCompareAsync"
+                aria-label="Compare @Name">
+          Compare
+        </button>
+        @if (cmpPulse)
+        {
+          <span class="absolute -top-1 -right-1">
+            <span class="relative flex h-2 w-2">
+              <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-secondary opacity-60"></span>
+              <span class="relative inline-flex h-2 w-2 rounded-full bg-secondary"></span>
+            </span>
+          </span>
+        }
+      </div>
+    </div>
+  </div>
+</div>
+
+@if (AlertOpen)
+{
+  <!-- Overlay -->
+  <div class="fixed inset-0 z-40 bg-background/60 backdrop-blur-sm"></div>
+
+  <!-- Dialog -->
+  <div class="fixed inset-0 z-50 grid place-items-center p-4">
+    <div id="price-alert-@PartId"
+         role="dialog"
+         aria-modal="true"
+         aria-labelledby="alert-title-@PartId"
+         class="card w-full max-w-md overflow-hidden shadow-lg">
+
+      <div class="flex items-center justify-between border-b border-border/60 px-4 py-3">
+        <h5 id="alert-title-@PartId" class="text-base font-semibold">Notify me</h5>
+        <button class="btn btn-ghost h-8 px-2" @onclick="CloseAlert" aria-label="Close">✕</button>
+      </div>
+
+      <div class="p-4 space-y-3">
+        @if (!Session.IsSignedIn)
+        {
+          <div>
+            <label class="label">Email</label>
+            <input class="input"
+                   @bind="AlertEmail" placeholder="you@email.com" inputmode="email" />
+          </div>
+        }
+        else if (!Session.EmailVerified)
+        {
+          <div class="rounded-md ring-1 ring-amber-300/40 bg-amber-50 text-amber-900 dark:bg-amber-900/20 dark:text-amber-200 px-3 py-2 text-sm">
+            Verify your email in <a href="/account/plan" class="underline">account settings</a> to turn on alerts.
+          </div>
+        }
+        else if (!string.IsNullOrWhiteSpace(Session.Email))
+        {
+          <div class="rounded-md ring-1 ring-primary/20 bg-primary/10 text-primary px-3 py-2 text-sm">
+            We’ll send alerts to @Session.Email.
+          </div>
+        }
+
+        <div>
+          <label class="label">Target price (optional)</label>
+          <input type="number" step="0.01" class="input" @bind="AlertTarget" />
+          <div class="mt-1 text-[11px] text-foreground/60">Leave blank to get a back-in-stock alert.</div>
+        </div>
+
+        @if (!string.IsNullOrEmpty(AlertMessage))
+        {
+          <div class="text-sm @(AlertSuccess ? "text-success" : "text-danger")">
+            @AlertMessage
+          </div>
+        }
+      </div>
+
+      <div class="flex items-center justify-end gap-2 border-t border-border/60 px-4 py-3">
+        <button class="btn btn-ghost h-9 px-3" @onclick="CloseAlert" disabled="@AlertBusy">Close</button>
+        <button class="btn btn-primary h-9 px-3"
+                @onclick="CreateAlertAsync"
+                disabled="@(AlertBusy || (Session.IsSignedIn && !Session.EmailVerified))">
+          @(AlertBusy ? "Saving…" : "Save alert")
+        </button>
+      </div>
+    </div>
+  </div>
+}
+
+@code {
+    private const string PlaceholderImageDataUri =
+        "data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 width=%2772%27 height=%2772%27 viewBox=%270 0 72 72%27%3E%3Crect width=%2772%27 height=%2772%27 fill=%27%23f1f3f5%27/%3E%3Cpath d=%27M18 50l12-14 9 10 9-12 12 16H18z%27 fill=%27%23ced4da%27/%3E%3Ccircle cx=%2726%27 cy=%2726%27 r=%276%27 fill=%27%23ced4da%27/%3E%3C/svg%3E";
+
+    [Parameter] public long PartId { get; set; }
+    [Parameter] public string Sku { get; set; } = string.Empty;
+    [Parameter] public string Name { get; set; } = string.Empty;
+    [Parameter] public string Brand { get; set; } = string.Empty;
+    [Parameter] public string? CategoryName { get; set; }
+    [Parameter] public string? ImageUrl { get; set; }
+    [Parameter] public bool IsKit { get; set; }
+    [Parameter] public decimal? BestPrice { get; set; }
+    [Parameter] public bool FitsEngine { get; set; }
+    [Parameter] public string? EngineCode { get; set; }
+    [Parameter] public EventCallback<ShopCardAddRequest> AddToBuildRequested { get; set; }
+    [Parameter] public EventCallback<string> OnCompare { get; set; }
+
+    private bool AddBusy;
+    private bool cmpPulse;
+
+    private bool AlertOpen;
+    private bool AlertBusy;
+    private bool AlertSuccess;
+    private string? AlertEmail = string.Empty;
+    private decimal? AlertTarget;
+    private string? AlertMessage;
+
+    private string PartUrl => $"/shop/parts/{(!string.IsNullOrWhiteSpace(Sku) ? Sku : PartId.ToString(CultureInfo.InvariantCulture))}";
+    private string BuyHref => $"/shop/go?partId={PartId}";
+    private string ImageSource => string.IsNullOrWhiteSpace(ImageUrl) ? PlaceholderImageDataUri : ImageUrl!;
+
+    private static string FormatPrice(decimal price) => price.ToString("C", CultureInfo.CurrentCulture);
+
+    private void OpenAlert()
+    {
+        AlertOpen = true;
+        AlertMessage = null;
+        AlertSuccess = false;
+        AlertBusy = false;
+        if (Session.IsSignedIn) AlertEmail = Session.Email;
+    }
+
+    private void CloseAlert()
+    {
+        AlertOpen = false;
+        AlertMessage = null;
+        AlertSuccess = false;
+        AlertBusy = false;
+    }
+
+    private async Task CreateAlertAsync()
+    {
+        if (AlertBusy) return;
+
+        if (Session.IsSignedIn && !Session.EmailVerified)
+        {
+            AlertMessage = "Verify your email to enable alerts.";
+            AlertSuccess = false;
+            return;
+        }
+
+        var email = Session.IsSignedIn ? null : AlertEmail?.Trim();
+        if (!Session.IsSignedIn && string.IsNullOrWhiteSpace(email))
+        {
+            AlertMessage = "Enter an email to receive alerts.";
+            AlertSuccess = false;
+            return;
+        }
+
+        AlertBusy = true;
+        AlertMessage = null;
+        AlertSuccess = false;
+
+        try
+        {
+            var payload = new { part_id = PartId, target_price = AlertTarget, stock_only = AlertTarget is null, email };
+            var response = await Http.PostAsJsonAsync("/api/alerts/price", payload);
+            if (response.IsSuccessStatusCode)
+            {
+                AlertApiResponse? apiResponse = null;
+                try { apiResponse = await response.Content.ReadFromJsonAsync<AlertApiResponse>(); } catch { }
+                var pending = apiResponse?.PendingVerification ?? (!Session.IsSignedIn);
+                AlertMessage = pending
+                    ? "Check your email to confirm this alert."
+                    : "Saved. We’ll email you when this matches.";
+                AlertSuccess = true;
+            }
+            else
+            {
+                ApiError? error = null;
+                try { error = await response.Content.ReadFromJsonAsync<ApiError>(); } catch { }
+                AlertMessage = MapAlertError(error?.Error, response.StatusCode);
+                AlertSuccess = false;
+            }
+        }
+        catch (Exception ex)
+        {
+            AlertMessage = $"Failed: {ex.Message}";
+            AlertSuccess = false;
+        }
+        finally
+        {
+            AlertBusy = false;
+        }
+    }
+
+    private async Task AddToBuildAsync()
+    {
+        if (!AddToBuildRequested.HasDelegate) return;
+        AddBusy = true;
+        try { await AddToBuildRequested.InvokeAsync(new ShopCardAddRequest(PartId, Sku)); }
+        finally { AddBusy = false; }
+    }
+
+    private async Task TriggerCompareAsync()
+    {
+        if (string.IsNullOrWhiteSpace(Sku) || !OnCompare.HasDelegate) return;
+        cmpPulse = true;
+        StateHasChanged();
+        await OnCompare.InvokeAsync(Sku);
+        await Task.Delay(500);
+        cmpPulse = false;
+        StateHasChanged();
+    }
+
+    private static string MapAlertError(string? code, HttpStatusCode status)
+        => code switch
+        {
+            "email_not_verified" => "Verify your email to enable alerts.",
+            "email_bounced" => "We can’t send to this email address. Update it in account settings.",
+            "email_unsubscribed" => "You’ve unsubscribed from alerts. Re-enable emails in account settings.",
+            "email_or_user_required" => "Enter an email to receive alerts.",
+            _ => status == HttpStatusCode.Forbidden
+                ? "Email alerts are disabled for this address."
+                : "Unable to save alert right now. Try again later."
+        };
+
+    private sealed class AlertApiResponse
+    {
+        [JsonPropertyName("ok")] public bool Ok { get; set; }
+        [JsonPropertyName("pending_verification")] public bool PendingVerification { get; set; }
+    }
+    private sealed class ApiError
+    {
+        [JsonPropertyName("error")] public string? Error { get; set; }
+    }
+}

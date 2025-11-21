@@ -1,0 +1,77 @@
+@inherits LayoutComponentBase
+@inject UserSession Session
+
+<div class="relative min-h-dvh overflow-hidden bg-background text-foreground">
+    <div aria-hidden="true" class="pointer-events-none absolute inset-0 bg-radial"></div>
+    <div aria-hidden="true" class="pointer-events-none absolute inset-x-0 top-0 h-48 bg-grid opacity-40 dark:opacity-20"></div>
+
+    <header class="sticky top-0 z-40 border-b border-border/60 bg-surface/80 backdrop-blur">
+        <div class="container flex h-16 items-center justify-between gap-4">
+            <NavLink class="inline-flex items-center gap-2 text-sm font-semibold tracking-tight" href="/" Match="NavLinkMatch.All" ActiveClass="">
+                <span class="inline-flex h-2.5 w-2.5 animate-pulse rounded-full bg-primary"></span>
+                <span>RotorBase</span>
+            </NavLink>
+
+            <nav class="hidden items-center gap-6 text-sm font-medium text-foreground/70 md:flex">
+                <NavLink href="/" Match="NavLinkMatch.All" class="transition hover:text-foreground" ActiveClass="text-foreground">
+                    Home
+                </NavLink>
+                <NavLink href="/builder" class="transition hover:text-foreground" ActiveClass="text-foreground">
+                    Builder
+                </NavLink>
+                <NavLink href="/shop" class="transition hover:text-foreground" ActiveClass="text-foreground">
+                    Shop
+                </NavLink>
+                <NavLink href="/builds" class="transition hover:text-foreground" ActiveClass="text-foreground">
+                    Builds
+                </NavLink>
+            </nav>
+
+            <div class="flex items-center gap-3">
+                @if (Session.IsSignedIn)
+                {
+                    <GamChip />
+                    <span class="hidden text-sm font-medium text-foreground/80 sm:inline">
+                        @(!string.IsNullOrWhiteSpace(Session.DisplayName) ? Session.DisplayName : Session.Email)
+                    </span>
+                }
+                <ThemeToggle />
+            </div>
+        </div>
+    </header>
+
+    <ThemeGuard />
+    <ClientBoot />
+
+    <div class="relative z-10">
+        <div class="container flex flex-col gap-8 py-10 md:flex-row">
+            <SidebarApp />
+
+            <main class="flex-1 space-y-6">
+                <PlanUsageBanner />
+                <div class="space-y-6">
+                    @Body
+                </div>
+            </main>
+        </div>
+    </div>
+
+    <footer class="relative z-10 border-t border-border/60 bg-surface/80 backdrop-blur">
+        <div class="container flex flex-col gap-4 py-6 text-sm text-foreground/70 sm:flex-row sm:items-center sm:justify-between">
+            <p>© @DateTime.Now.Year RotorBase. All rights reserved.</p>
+            <div class="flex items-center gap-4">
+                <NavLink class="hover:text-foreground" href="/privacy">Privacy</NavLink>
+                <NavLink class="hover:text-foreground" href="/terms">Terms</NavLink>
+            </div>
+        </div>
+    </footer>
+</div>
+
+<CompareDrawer />
+<ToastHost />
+
+<div id="blazor-error-ui" class="fixed inset-x-0 bottom-4 z-50 mx-auto hidden w-[calc(100%-2rem)] max-w-md rounded-lg bg-danger/10 px-4 py-3 text-sm text-danger shadow-lg ring-1 ring-danger/30" data-nosnippet>
+    An unhandled error has occurred.
+    <a href="." class="ml-2 font-semibold underline underline-offset-2">Reload</a>
+    <span class="dismiss ml-3 cursor-pointer text-lg leading-none">×</span>
+</div>

@@ -1,0 +1,56 @@
+@inject HttpClient Http
+
+@if (_prefs?.ShowPoints is true && _summary is not null)
+{
+    <button class="inline-flex items-center gap-1 rounded-full bg-white/70 px-3 py-1 text-sm shadow ring-1 ring-black/5 hover:ring-indigo-300"
+            title="Your points and streak"
+            @onclick="TogglePoints">
+        <span class="font-semibold">@_summary.points</span>
+        <span class="text-gray-500">pts</span>
+        <span class="mx-1 h-3 w-px bg-gray-200"></span>
+        <span class="text-gray-600">🔥 @_summary.streak</span>
+    </button>
+}
+else if (_prefs is null || _summary is null)
+{
+    <div class="h-6 w-16 animate-pulse rounded bg-muted"></div>
+}
+
+@code {
+    private record GamSummary(int points, int streak, int best, string[] badges);
+    private record PrefsDto(bool ShowPoints, bool ShowBadges, bool EmailOptIn, int StreakGraceDays, string? Timezone);
+
+    private GamSummary? _summary;
+    private PrefsDto? _prefs;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            var summaryTask = Http.GetFromJsonAsync<GamSummary>("/api/me/gamification/summary");
+            var prefsTask = Http.GetFromJsonAsync<PrefsDto>("/api/me/gamification/prefs");
+
+            await Task.WhenAll(summaryTask!, prefsTask!);
+
+            _summary = summaryTask!.Result;
+            _prefs = prefsTask!.Result;
+        }
+        catch (HttpRequestException)
+        {
+            _summary = null;
+            _prefs = null;
+        }
+    }
+
+    private async Task TogglePoints()
+    {
+        if (_prefs is null)
+        {
+            return;
+        }
+
+        var updated = _prefs with { ShowPoints = !_prefs.ShowPoints };
+        await Http.PutAsJsonAsync("/api/me/gamification/prefs", updated);
+        _prefs = updated;
+    }
+}

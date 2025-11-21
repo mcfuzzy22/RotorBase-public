@@ -1,0 +1,49 @@
+@page "/me/badges"
+@inject HttpClient Http
+
+<h1 class="mb-4 text-xl font-semibold">Your Badges</h1>
+
+@if (_rows is null)
+{
+    <div class="text-gray-500">Loading…</div>
+}
+else if (_rows.Count == 0)
+{
+    <div class="text-gray-500">No badges yet—build something and you’ll start earning!</div>
+}
+else
+{
+    <ul class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        @foreach (var item in _rows)
+        {
+            <li class="rounded-xl bg-white/70 p-4 ring-1 ring-black/5">
+                <div class="font-medium">@item.name</div>
+                @if (!string.IsNullOrWhiteSpace(item.description))
+                {
+                    <div class="text-sm text-gray-500">@item.description</div>
+                }
+                <div class="mt-1 text-xs text-gray-400">
+                    Earned @item.earned_at.ToLocalTime().ToString("g")
+                </div>
+            </li>
+        }
+    </ul>
+}
+
+@code {
+    private record BadgeVm(string code, string name, string? description, string? icon_url, DateTime earned_at, long? build_id);
+
+    private List<BadgeVm>? _rows;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            _rows = await Http.GetFromJsonAsync<List<BadgeVm>>("/api/me/badges");
+        }
+        catch (HttpRequestException)
+        {
+            _rows = new List<BadgeVm>();
+        }
+    }
+}

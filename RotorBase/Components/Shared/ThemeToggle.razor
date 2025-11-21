@@ -1,0 +1,16 @@
+@inject ThemeService Theme
+
+<button class="btn btn-ghost h-10 px-3" title="Toggle dark mode" @onclick="ToggleAsync">
+  <span class="sr-only">Toggle dark mode</span>
+  <svg class="h-5 w-5 dark:hidden" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+    <path d="M12 2a1 1 0 0 1 1 1v2a1 1 0 1 1-2 0V3a1 1 0 0 1 1-1ZM4.22 4.22a1 1 0 0 1 1.42 0l1.41 1.41a1 1 0 0 1-1.41 1.42L4.22 5.64a1 1 0 0 1 0-1.42ZM2 13a1 1 0 1 1 0-2h2a1 1 0 1 1 0 2H2Zm16.95-7.36a1 1 0 0 1 1.41 1.41l-1.41 1.42a1 1 0 0 1-1.42-1.42l1.42-1.41ZM12 19a1 1 0 0 1 1 1v2a1 1 0 1 1-2 0v-2a1 1 0 0 1 1-1ZM18 11a1 1 0 1 1 0 2h4a1 1 0 1 1 0-2h-4Z" />
+  </svg>
+  <svg class="hidden h-5 w-5 dark:block" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+    <path d="M21.64 13A9 9 0 1 1 11 2.36a7 7 0 1 0 10.64 10.64Z" />
+  </svg>
+</button>
+
+@code {
+  private async Task ToggleAsync() =>
+      await Theme.ToggleAsync();
+}

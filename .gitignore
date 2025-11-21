@@ -1,0 +1,39 @@
+# OS
+.DS_Store
+Thumbs.db
+
+# IDEs
+.idea/
+.vscode/
+.vs/
+
+# .NET build output
+bin/
+obj/
+TestResults/
+
+# Rider/VS cache
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+# NuGet
+*.nupkg
+*.snupkg
+.nuget/packages/
+
+# Logs
+*.log
+
+# Coverage
+coverage/
+*.coverage
+*.coveragejson
+
+# Local secrets / env files
+appsettings.*.local.json
+appsettings.Local.json
+.env
+.env.*
+*.secrets.json

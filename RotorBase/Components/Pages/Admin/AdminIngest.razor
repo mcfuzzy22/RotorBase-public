@@ -1,0 +1,1126 @@
+@page "/admin/ingest"
+@rendermode InteractiveServer
+@using System.Linq
+@using System.Net.Http.Json
+@using System.Text.Json
+@using System.Text.Json.Serialization
+@using System.Globalization
+@inject HttpClient Http
+@inject UserSession Session
+
+<div class="min-h-[calc(100vh-4rem)] bg-background text-foreground">
+  <section class="container py-6 space-y-4">
+
+    <div class="flex items-start justify-between">
+      <div>
+        <h1 class="text-2xl md:text-3xl font-bold tracking-tight">Admin · Ingest Part</h1>
+        <p class="help mt-1">Create or upsert a part/kit with categories, fitment, image, and offerings.</p>
+      </div>
+    </div>
+
+    @if (!Session.IsSignedIn)
+    {
+      <div class="card ring-1 ring-info/25 bg-info/5 text-info px-3 py-2 text-sm">
+        Sign in to view admin tools.
+      </div>
+    }
+    else if (!Session.IsAdmin)
+    {
+      <div class="card ring-1 ring-warning/25 bg-warning/5 text-warning px-3 py-2 text-sm">
+        You need admin access to ingest parts.
+      </div>
+    }
+    else
+    {
+      <div class="grid gap-4 lg:grid-cols-12 min-w-0">
+        <!-- LEFT: Form -->
+        <div class="lg:col-span-6 space-y-4 min-w-0">
+          <!-- Header / pickers -->
+          <div class="card p-0 overflow-hidden">
+            <div class="flex items-center justify-between px-4 py-3 border-b border-border/60">
+              <h2 class="section-title">Manual Part Ingest</h2>
+              <BrandVendorManager OnPickBrand="HandleBrandPicked" OnPickVendor="HandleVendorPicked" />
+            </div>
+
+            <div class="p-4">
+              <div class="grid gap-3 sm:grid-cols-12">
+                <!-- SKU + Status -->
+                <div class="sm:col-span-6 fieldset">
+                  <label class="label">SKU</label>
+                  <input class="input" @bind-value="Sku" @bind-value:event="oninput" />
+                </div>
+                <div class="sm:col-span-6 fieldset">
+                  <label class="label">Status</label>
+                  <select class="input" @bind="Status">
+                    <option value="active">active</option>
+                    <option value="draft">draft</option>
+                    <option value="discontinued">discontinued</option>
+                  </select>
+                </div>
+
+                <!-- Name -->
+                <div class="sm:col-span-12 fieldset">
+                  <label class="label">Name</label>
+                  <input class="input" @bind-value="Name" @bind-value:event="oninput" />
+                </div>
+
+                <!-- Brand / UoM / Pieces -->
+                <div class="sm:col-span-6 fieldset">
+                  <label class="label">Brand</label>
+                  <input class="input" @bind-value="Brand" @bind-value:event="oninput" />
+                </div>
+                <div class="sm:col-span-3 fieldset">
+                  <label class="label">UoM</label>
+                  <input class="input" @bind-value="Uom" @bind-value:event="oninput" />
+                </div>
+                <div class="sm:col-span-3 fieldset">
+                  <label class="label">Pieces</label>
+                  <input type="number" step="0.001" class="input" @bind-value="PiecesPerUnit" />
+                </div>
+
+                <!-- Kit toggle -->
+                <div class="sm:col-span-12">
+                  <label class="inline-flex items-center gap-2 text-sm text-foreground/80">
+                    <input class="h-4 w-4 rounded border-border/60 text-primary focus:ring-primary/60" type="checkbox" @bind="IsKit" />
+                    <span>Is kit</span>
+                  </label>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Categories -->
+          <div class="card p-4">
+            <div class="flex items-center justify-between">
+              <h3 class="section-title">Categories</h3>
+              <span class="note">First is primary</span>
+            </div>
+            <div class="mt-2 rounded-md ring-1 ring-border/60 p-2 bg-surface">
+              <CategoryPicker Categories="CategorySlugs" CategoriesChanged="CategorySlugsChanged" />
+            </div>
+          </div>
+
+          <!-- Fitment -->
+          <div class="card p-4">
+            <h3 class="section-title">Fitment (engine codes)</h3>
+            <div class="mt-2 rounded-md ring-1 ring-border/60 p-2 bg-surface">
+              <EnginePicker EngineCodes="EngineCodes" EngineCodesChanged="EngineCodesChanged" />
+            </div>
+          </div>
+
+          <!-- Image -->
+          <div class="card p-4">
+            <h3 class="section-title">Image</h3>
+            <div class="mt-2 rounded-md ring-1 ring-border/60 p-2 bg-surface">
+              <ImageDrop @bind-Value="ImageUrl" />
+            </div>
+            @if (!string.IsNullOrWhiteSpace(ImageUrl))
+            {
+              <div class="mt-1 note">Image URL: @ImageUrl</div>
+            }
+          </div>
+
+          <!-- Offerings (simple editor; updates JSON on every keystroke) -->
+          <div class="card p-4">
+            <div class="flex items-center justify-between">
+              <h3 class="section-title">Offerings</h3>
+              <button type="button" class="btn btn-soft h-8 px-3" @onclick="AddOffering">+ Add offering</button>
+            </div>
+
+            <div class="mt-3 space-y-3">
+              @if (Offerings is null || Offerings.Count == 0)
+              {
+                <div class="note">No offerings yet. Click "Add offering".</div>
+              }
+              else
+              {
+                @for (var i = 0; i < Offerings.Count; i++)
+                {
+                  var index = i;
+                  <div @key=index class="rounded-md ring-1 ring-border/60 bg-surface p-3">
+                    <div class="grid gap-2 md:grid-cols-12">
+                      <div class="md:col-span-3">
+                        <label class="label">Vendor</label>
+                        <input class="input h-8"
+                               value="@Offerings[index].VendorName"
+                               @oninput="(ChangeEventArgs e) => UpdateOfferingVendor(index, e.Value?.ToString())" />
+                      </div>
+
+                      <div class="md:col-span-3">
+                        <label class="label">Price</label>
+                        <input class="input h-8 text-right"
+                               type="number" step="0.01" min="0"
+                               value="@Offerings[index].Price.ToString(CultureInfo.InvariantCulture)"
+                               @oninput="(ChangeEventArgs e) => UpdateOfferingPrice(index, e.Value?.ToString())" />
+                      </div>
+
+                      <div class="md:col-span-2">
+                        <label class="label">Currency</label>
+                        <input class="input h-8 uppercase"
+                               maxlength="6"
+                               value="@Offerings[index].Currency"
+                               @oninput="(ChangeEventArgs e) => UpdateOfferingCurrency(index, e.Value?.ToString())" />
+                      </div>
+
+                      <div class="md:col-span-3">
+                        <label class="label">URL</label>
+                        <input class="input h-8"
+                               value="@(Offerings[index].Url ?? string.Empty)"
+                               @oninput="(ChangeEventArgs e) => UpdateOfferingUrl(index, e.Value?.ToString())" />
+                      </div>
+
+                      <div class="md:col-span-3">
+                        <label class="label">Availability</label>
+                        <select class="input h-8"
+                               value="@Offerings[index].Availability"
+                                @onchange="(ChangeEventArgs e) => UpdateOfferingAvailability(index, e.Value?.ToString())">
+                          <option value="in_stock">in_stock</option>
+                          <option value="backorder">backorder</option>
+                          <option value="discontinued">discontinued</option>
+                          <option value="unknown">unknown</option>
+                        </select>
+                      </div>
+
+                      <div class="md:col-span-2 flex items-end justify-end">
+                        <button type="button"
+                                class="btn btn-ghost h-8 px-3 text-danger"
+                                title="Remove"
+                                @onclick="() => RemoveOffering(i)">
+                          Remove
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                }
+              }
+            </div>
+          </div>
+
+          <!-- Actions + messages -->
+          <div class="card p-4">
+            <div class="toolbar">
+              <button class="btn btn-soft" type="button" @onclick="ValidateAsync" disabled="@Busy">
+                @(Busy ? "Validating…" : "Validate")
+              </button>
+              <button class="btn btn-primary" type="button" @onclick="CreateAsync" disabled="@Busy">
+                @(Busy ? "Saving…" : "Create / Upsert")
+              </button>
+              <button class="btn btn-ghost" type="button" @onclick="FormatJson">Format JSON</button>
+
+              <label class="ml-auto inline-flex items-center gap-2 text-sm text-foreground/80 select-none">
+                <input class="h-4 w-4 rounded border-border/60 text-primary focus:ring-primary/60" type="checkbox" id="sync-json" @bind="SyncJson" />
+                <span>Sync form & JSON</span>
+              </label>
+            </div>
+
+            @if (!string.IsNullOrEmpty(FormError))
+            {
+              <div role="alert" class="card ring-1 ring-danger/25 bg-danger/5 text-danger px-3 py-2 text-sm mt-3">@FormError</div>
+            }
+            @if (!string.IsNullOrEmpty(FormInfo))
+            {
+              <div role="alert" class="card ring-1 ring-success/25 bg-success/5 text-success px-3 py-2 text-sm mt-3">@FormInfo</div>
+            }
+            @if (Warnings.Count > 0)
+            {
+              <div role="alert" class="card ring-1 ring-warning/25 bg-warning/5 text-warning px-3 py-2 text-sm mt-3">
+                <strong>Warnings:</strong>
+                <ul class="mb-0 list-disc pl-5">
+                  @foreach (var warning in Warnings) { <li>@warning</li> }
+                </ul>
+              </div>
+            }
+          </div>
+        </div>
+
+        <!-- RIGHT: AI + JSON -->
+        <div class="lg:col-span-6 space-y-4 min-w-0">
+          <!-- AI Draft -->
+          <div class="card p-0 overflow-hidden">
+            <div class="px-4 py-3 border-b border-border/60">
+              <h3 class="section-title">Fetch AI draft</h3>
+              <p class="help mt-1">Fetch via Perplexity, normalize, then apply below.</p>
+            </div>
+
+            <div class="p-4 space-y-3">
+              <div class="grid gap-2 md:grid-cols-12">
+                <input class="input md:col-span-6" placeholder="https://…" @bind="AiSourceUrl" />
+                <input class="input md:col-span-4" placeholder="Engine code (optional)" @bind="AiSourceEngineCode" />
+                <button class="btn btn-soft md:col-span-2" type="button" @onclick="FetchAiFromUrlAsync" disabled="@AiBusy">
+                  @(AiBusy ? "Fetching…" : "Fetch via AI")
+                </button>
+              </div>
+
+              <div class="flex flex-wrap gap-4 text-sm text-foreground/80">
+                <label class="inline-flex items-center gap-2"><input class="h-4 w-4 rounded border-border/60 text-primary focus:ring-primary/60" type="checkbox" @bind="AiUseDbEngines" /> <span>Seed DB engines</span></label>
+                <label class="inline-flex items-center gap-2"><input class="h-4 w-4 rounded border-border/60 text-primary focus:ring-primary/60" type="checkbox" @bind="AiUseDbCategories" /> <span>Seed DB categories</span></label>
+                <label class="inline-flex items-center gap-2"><input class="h-4 w-4 rounded border-border/60 text-primary focus:ring-primary/60" type="checkbox" @bind="AiUseDbTreeEdges" /> <span>Include DB tree edges</span></label>
+                <label class="inline-flex items-center gap-2"><input class="h-4 w-4 rounded border-border/60 text-primary focus:ring-primary/60" type="checkbox" @bind="AiEnrichParts" /> <span>Enrich part details</span></label>
+              </div>
+
+              <div class="flex items-center justify-between">
+                <h4 class="section-title">AI Draft</h4>
+                <button class="btn btn-ghost h-8 px-3" type="button" @onclick="NormalizeAiAsync" disabled="@AiBusy">
+                  @(AiBusy ? "Normalizing…" : "Normalize")
+                </button>
+              </div>
+
+              <textarea class="input min-h-[12rem]" rows="10" placeholder="Paste AI JSON here…" @bind="AiText"></textarea>
+
+              @if (AiWarnings.Length > 0)
+              {
+                <div class="note">
+                  @foreach (var warning in AiWarnings) { <div>• @warning</div> }
+                </div>
+              }
+              @if (AiNormalizeErrors.Length > 0)
+              {
+                <div class="text-xs text-danger">
+                  @foreach (var error in AiNormalizeErrors) { <div>• @error</div> }
+                </div>
+              }
+              @if (!string.IsNullOrEmpty(AiError))
+              {
+                <div class="text-xs text-danger">@AiError</div>
+              }
+
+              <div class="toolbar">
+                <label class="inline-flex items-center gap-2 text-sm text-foreground/80">
+                  <input class="h-4 w-4 rounded border-border/60 text-primary focus:ring-primary/60" type="checkbox" @bind="KeepManualPicks" />
+                  <span>Keep manual categories & fitment</span>
+                </label>
+                <button class="ml-auto btn btn-primary h-8 px-3" type="button"
+                        @onclick="ApplyAiToEditor" disabled="@(AiNormalizedPayload is null || AiBusy)">
+                  Apply to editor
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Payload JSON -->
+          <div class="card p-0 overflow-hidden">
+            <div class="px-4 py-3 border-b border-border/60">
+              <h3 class="section-title">Payload JSON</h3>
+            </div>
+            <div class="p-4">
+              <textarea class="input min-h-[28rem]" rows="28" value="@JsonText" @oninput="OnJsonInput"></textarea>
+              @if (!string.IsNullOrEmpty(JsonError))
+              {
+                <div class="mt-2 text-xs text-danger">@JsonError</div>
+              }
+            </div>
+          </div>
+        </div>
+      </div>
+    }
+  </section>
+</div>
+
+@code {
+    // C# code-behind UNCHANGED from your original. Markup-only Tailwind conversion above.
+    string _sku = string.Empty;
+    string Sku
+    {
+        get => _sku;
+        set
+        {
+            var next = value ?? string.Empty;
+            if (_sku == next)
+                return;
+            _sku = next;
+            if (!_updatingFromJson)
+                RefreshJsonFromForm();
+        }
+    }
+
+    string _name = string.Empty;
+    string Name
+    {
+        get => _name;
+        set
+        {
+            var next = value ?? string.Empty;
+            if (_name == next)
+                return;
+            _name = next;
+            if (!_updatingFromJson)
+                RefreshJsonFromForm();
+        }
+    }
+
+    string _brand = string.Empty;
+    string Brand
+    {
+        get => _brand;
+        set
+        {
+            var next = value ?? string.Empty;
+            if (_brand == next)
+                return;
+            _brand = next;
+            if (!_updatingFromJson)
+                RefreshJsonFromForm();
+        }
+    }
+
+    string _uom = "each";
+    string Uom
+    {
+        get => _uom;
+        set
+        {
+            var next = string.IsNullOrWhiteSpace(value) ? "each" : value!;
+            if (_uom == next)
+                return;
+            _uom = next;
+            if (!_updatingFromJson)
+                RefreshJsonFromForm();
+        }
+    }
+
+    decimal _piecesPerUnit = 1m;
+    decimal PiecesPerUnit
+    {
+        get => _piecesPerUnit;
+        set
+        {
+            var normalized = value <= 0 ? 1m : value;
+            if (_piecesPerUnit == normalized)
+                return;
+            _piecesPerUnit = normalized;
+            if (!_updatingFromJson)
+                RefreshJsonFromForm();
+        }
+    }
+
+    bool _isKit;
+    bool IsKit
+    {
+        get => _isKit;
+        set
+        {
+            if (_isKit == value)
+                return;
+            _isKit = value;
+            if (!_updatingFromJson)
+                RefreshJsonFromForm();
+        }
+    }
+
+    string _status = "active";
+    string Status
+    {
+        get => _status;
+        set
+        {
+            var next = string.IsNullOrWhiteSpace(value) ? "active" : value!;
+            if (_status == next)
+                return;
+            _status = next;
+            if (!_updatingFromJson)
+                RefreshJsonFromForm();
+        }
+    }
+
+    List<string> CategorySlugs { get; set; } = new();
+    List<string> EngineCodes { get; set; } = new();
+    List<OfferingsGrid.OfferingRow> Offerings { get; set; } = new() { new OfferingsGrid.OfferingRow() };
+
+    bool _syncJson = true;
+    bool SyncJson
+    {
+        get => _syncJson;
+        set
+        {
+            if (_syncJson == value)
+                return;
+            _syncJson = value;
+            if (_syncJson)
+                RefreshJsonFromForm();
+        }
+    }
+    string JsonText { get; set; } = string.Empty;
+    string? JsonError { get; set; }
+    string? FormError { get; set; }
+    string? FormInfo { get; set; }
+    List<string> Warnings { get; set; } = new();
+    bool Busy { get; set; }
+
+    string AiText { get; set; } = string.Empty;
+    string? AiError { get; set; }
+    bool AiBusy { get; set; }
+    AdminIngestPayloadEnvelope? AiNormalizedPayload { get; set; }
+    string[] AiWarnings { get; set; } = Array.Empty<string>();
+    string[] AiNormalizeErrors { get; set; } = Array.Empty<string>();
+    bool KeepManualPicks { get; set; } = false;
+    string AiSourceUrl { get; set; } = string.Empty;
+    string AiSourceEngineCode { get; set; } = string.Empty;
+    bool AiUseDbEngines { get; set; } = true;
+    bool AiUseDbCategories { get; set; } = true;
+    bool AiUseDbTreeEdges { get; set; } = false;
+    bool AiEnrichParts { get; set; } = true;
+
+    bool _updatingFromForm;
+    bool _updatingFromJson;
+    string _imageUrl = string.Empty;
+
+    string ImageUrl
+    {
+        get => _imageUrl;
+        set
+        {
+            var next = value ?? string.Empty;
+            if (_imageUrl == next)
+                return;
+            _imageUrl = next;
+            if (!_updatingFromJson)
+                RefreshJsonFromForm();
+        }
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        await Session.HydrateAsync();
+    }
+
+    protected override void OnAfterRender(bool firstRender)
+    {
+        if (firstRender)
+        {
+            RefreshJsonFromForm();
+        }
+    }
+
+    Task CategorySlugsChanged(List<string> value)
+    {
+        CategorySlugs = value ?? new();
+        RefreshJsonFromForm();
+        return Task.CompletedTask;
+    }
+
+    Task EngineCodesChanged(List<string> value)
+    {
+        EngineCodes = value ?? new();
+        RefreshJsonFromForm();
+        return Task.CompletedTask;
+    }
+
+    void AddOffering()
+    {
+        Offerings ??= new();
+        Offerings.Add(new OfferingsGrid.OfferingRow
+        {
+            VendorName = string.Empty,
+            Price = 0m,
+            Currency = "USD",
+            Availability = "in_stock",
+            Url = string.Empty
+        });
+        RefreshJsonFromForm();
+    }
+
+    void RemoveOffering(int index)
+    {
+        if (Offerings is null)
+            return;
+
+        if (index >= 0 && index < Offerings.Count)
+        {
+            Offerings.RemoveAt(index);
+            RefreshJsonFromForm();
+        }
+    }
+
+    bool TryGetOffering(int index, out OfferingsGrid.OfferingRow row)
+    {
+        row = default!;
+        if (Offerings is null)
+            return false;
+        if (index < 0 || index >= Offerings.Count)
+            return false;
+        row = Offerings[index];
+        return true;
+    }
+
+    void UpdateOfferingVendor(int index, string? value)
+    {
+        if (!TryGetOffering(index, out var offering))
+            return;
+        offering.VendorName = value?.Trim() ?? string.Empty;
+        RefreshJsonFromForm();
+    }
+
+    void UpdateOfferingPrice(int index, string? value)
+    {
+        if (!TryGetOffering(index, out var offering))
+            return;
+        if (decimal.TryParse(value, NumberStyles.Number, CultureInfo.InvariantCulture, out var parsed) && parsed >= 0)
+            offering.Price = parsed;
+        else if (string.IsNullOrWhiteSpace(value))
+            offering.Price = 0m;
+        RefreshJsonFromForm();
+    }
+
+    void UpdateOfferingCurrency(int index, string? value)
+    {
+        if (!TryGetOffering(index, out var offering))
+            return;
+        var next = string.IsNullOrWhiteSpace(value)
+            ? offering.Currency
+            : value!.Trim().ToUpperInvariant();
+        offering.Currency = next;
+        RefreshJsonFromForm();
+    }
+
+    void UpdateOfferingUrl(int index, string? value)
+    {
+        if (!TryGetOffering(index, out var offering))
+            return;
+        offering.Url = string.IsNullOrWhiteSpace(value) ? null : value!.Trim();
+        RefreshJsonFromForm();
+    }
+
+    void UpdateOfferingAvailability(int index, string? value)
+    {
+        if (!TryGetOffering(index, out var offering))
+            return;
+        var next = string.IsNullOrWhiteSpace(value) ? offering.Availability : value!.Trim();
+        offering.Availability = next;
+        RefreshJsonFromForm();
+    }
+
+    void RefreshJsonFromForm()
+    {
+        if (!SyncJson || _updatingFromJson)
+            return;
+
+        try
+        {
+            _updatingFromForm = true;
+            var payload = new AdminIngestPayloadEnvelope
+            {
+                Part = new AdminIngestPartPayload
+                {
+                    Sku = Sku,
+                    Name = Name,
+                    BrandName = Brand,
+                    IsKit = IsKit,
+                    Uom = Uom,
+                    PiecesPerUnit = PiecesPerUnit,
+                    Status = Status,
+                    ImageUrl = string.IsNullOrWhiteSpace(ImageUrl) ? null : ImageUrl
+                },
+                Categories = CategorySlugs?.ToList() ?? new(),
+                Fitment = EngineCodes?.ToList() ?? new(),
+                Offerings = Offerings.Select(o => new AdminIngestOfferingPayload
+                {
+                    VendorName = o.VendorName,
+                    Price = o.Price,
+                    Currency = o.Currency,
+                    Url = string.IsNullOrWhiteSpace(o.Url) ? null : o.Url,
+                    Availability = o.Availability
+                }).ToList()
+            };
+
+            JsonText = JsonSerializer.Serialize(payload, new JsonSerializerOptions { WriteIndented = true });
+            JsonError = null;
+        }
+        catch (Exception ex)
+        {
+            JsonError = ex.Message;
+        }
+        finally
+        {
+            _updatingFromForm = false;
+            StateHasChanged();
+        }
+    }
+
+    void OnJsonInput(ChangeEventArgs args)
+    {
+        JsonText = args.Value?.ToString() ?? string.Empty;
+        if (!SyncJson)
+            return;
+
+        try
+        {
+            using var doc = JsonDocument.Parse(JsonText);
+            JsonError = null;
+            ApplyFormFromJsonElement(doc.RootElement.Clone());
+        }
+        catch (Exception ex)
+        {
+            JsonError = ex.Message;
+        }
+    }
+
+    void ApplyFormFromJsonElement(JsonElement element)
+    {
+        if (_updatingFromForm)
+            return;
+
+        try
+        {
+            _updatingFromJson = true;
+            var payload = element.Deserialize<AdminIngestPayloadEnvelope>(new JsonSerializerOptions { PropertyNameCaseInsensitive = true }) ?? new AdminIngestPayloadEnvelope();
+            ApplyFormFromPayload(payload);
+            JsonError = null;
+        }
+        catch (Exception ex)
+        {
+            JsonError = ex.Message;
+        }
+        finally
+        {
+            _updatingFromJson = false;
+            StateHasChanged();
+        }
+    }
+
+    void ApplyFormFromPayload(AdminIngestPayloadEnvelope payload)
+    {
+        var part = payload.Part ?? new AdminIngestPartPayload();
+        Sku = part.Sku ?? string.Empty;
+        Name = part.Name ?? string.Empty;
+        Brand = part.BrandName ?? string.Empty;
+        IsKit = part.IsKit ?? false;
+        Uom = part.Uom ?? "each";
+        PiecesPerUnit = part.PiecesPerUnit ?? 1m;
+        Status = string.IsNullOrWhiteSpace(part.Status) ? "active" : part.Status!;
+        ImageUrl = part.ImageUrl ?? string.Empty;
+
+        CategorySlugs = payload.Categories?.ToList() ?? new();
+        EngineCodes = payload.Fitment?.ToList() ?? new();
+        Offerings = (payload.Offerings ?? new()).Select(o => new OfferingsGrid.OfferingRow
+        {
+            VendorName = o.VendorName ?? string.Empty,
+            Price = o.Price ?? 0m,
+            Currency = string.IsNullOrWhiteSpace(o.Currency) ? "USD" : o.Currency!,
+            Url = o.Url,
+            Availability = string.IsNullOrWhiteSpace(o.Availability) ? "in_stock" : o.Availability!
+        }).ToList();
+
+        if (Offerings.Count == 0)
+            Offerings.Add(new OfferingsGrid.OfferingRow());
+    }
+
+    async Task ValidateAsync()
+    {
+        if (Busy)
+            return;
+
+        Busy = true;
+        FormError = null;
+        FormInfo = null;
+        Warnings = new();
+        StateHasChanged();
+
+        if (!TryGetPayloadElement(out var element, out var parseError))
+        {
+            FormError = parseError;
+            Busy = false;
+            StateHasChanged();
+            return;
+        }
+
+        try
+        {
+            var resp = await Http.PostAsJsonAsync("/api/admin/ingest/validate", element);
+            var body = await resp.Content.ReadFromJsonAsync<JsonElement>();
+            if (!resp.IsSuccessStatusCode || body.ValueKind != JsonValueKind.Object)
+            {
+                FormError = $"Validation failed: {(int)resp.StatusCode} {resp.ReasonPhrase}";
+                return;
+            }
+
+            var ok = body.TryGetProperty("ok", out var okProp) && okProp.GetBoolean();
+            Warnings = ExtractStringList(body, "warnings");
+
+            if (body.TryGetProperty("errors", out var errProp))
+            {
+                var errors = errProp.EnumerateArray().Select(x => x.GetString()).Where(x => !string.IsNullOrWhiteSpace(x)).ToList();
+                if (errors.Count > 0)
+                    FormError = string.Join("; ", errors);
+            }
+
+            if (body.TryGetProperty("normalized", out var normalized))
+            {
+                JsonText = JsonSerializer.Serialize(normalized, new JsonSerializerOptions { WriteIndented = true });
+                ApplyFormFromJsonElement(normalized);
+            }
+
+            FormInfo = ok
+                ? (Warnings.Count > 0 ? $"Valid with {Warnings.Count} warning(s)." : "Valid ✓")
+                : "Validation failed.";
+        }
+        catch (Exception ex)
+        {
+            FormError = ex.Message;
+        }
+        finally
+        {
+            Busy = false;
+            StateHasChanged();
+        }
+    }
+
+    async Task CreateAsync()
+    {
+        if (Busy)
+            return;
+
+        Busy = true;
+        FormError = null;
+        FormInfo = null;
+        Warnings = new();
+        StateHasChanged();
+
+        if (!TryGetPayloadElement(out var element, out var parseError))
+        {
+            FormError = parseError;
+            Busy = false;
+            StateHasChanged();
+            return;
+        }
+
+        try
+        {
+            var resp = await Http.PostAsJsonAsync("/api/admin/ingest/part", element);
+            var body = await resp.Content.ReadFromJsonAsync<JsonElement>();
+
+            if (!resp.IsSuccessStatusCode)
+            {
+                var errors = body.ValueKind == JsonValueKind.Object ? ExtractStringList(body, "errors") : new List<string>();
+                FormError = errors.Count > 0
+                    ? string.Join("; ", errors)
+                    : $"Save failed: {(int)resp.StatusCode} {resp.ReasonPhrase}";
+
+                if (body.ValueKind == JsonValueKind.Object && body.TryGetProperty("normalized", out var normalized))
+                {
+                    JsonText = JsonSerializer.Serialize(normalized, new JsonSerializerOptions { WriteIndented = true });
+                    ApplyFormFromJsonElement(normalized);
+                }
+                return;
+            }
+
+            Warnings = ExtractStringList(body, "warnings");
+            var sku = body.TryGetProperty("sku", out var skuProp) ? skuProp.GetString() : Sku;
+            var partId = body.TryGetProperty("part_id", out var partProp) ? partProp.GetInt64() : (long?)null;
+            FormInfo = partId.HasValue ? $"Saved part #{partId} ({sku})." : $"Saved {sku}.";
+
+            var lastBrand = Brand;
+            var lastVendor = Offerings.FirstOrDefault()?.VendorName ?? string.Empty;
+            ResetForm(lastBrand, lastVendor);
+        }
+        catch (Exception ex)
+        {
+            FormError = ex.Message;
+        }
+        finally
+        {
+            Busy = false;
+            StateHasChanged();
+        }
+    }
+
+    void ResetForm(string preserveBrand, string preserveVendor)
+    {
+        _updatingFromJson = true;
+        _sku = string.Empty;
+        _name = string.Empty;
+        _brand = preserveBrand ?? string.Empty;
+        _imageUrl = string.Empty;
+        _status = "active";
+        _piecesPerUnit = 1m;
+        _isKit = false;
+        _uom = "each";
+        _updatingFromJson = false;
+
+        CategorySlugs = new();
+        EngineCodes = new();
+        Offerings = new()
+        {
+            new OfferingsGrid.OfferingRow
+            {
+                VendorName = preserveVendor,
+                Currency = "USD",
+                Availability = "in_stock"
+            }
+        };
+        RefreshJsonFromForm();
+    }
+
+    bool TryGetPayloadElement(out JsonElement element, out string? error)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(JsonText);
+            element = doc.RootElement.Clone();
+            error = null;
+            return true;
+        }
+        catch (Exception ex)
+        {
+            element = default;
+            error = ex.Message;
+            return false;
+        }
+    }
+
+    void FormatJson()
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(JsonText);
+            JsonText = JsonSerializer.Serialize(doc.RootElement, new JsonSerializerOptions { WriteIndented = true });
+            JsonError = null;
+            if (SyncJson)
+                ApplyFormFromJsonElement(doc.RootElement.Clone());
+        }
+        catch (Exception ex)
+        {
+            JsonError = ex.Message;
+        }
+    }
+
+    async Task FetchAiFromUrlAsync()
+    {
+        if (AiBusy)
+            return;
+
+        AiBusy = true;
+        AiError = null;
+        AiNormalizedPayload = null;
+        AiWarnings = Array.Empty<string>();
+        AiNormalizeErrors = Array.Empty<string>();
+        StateHasChanged();
+
+        try
+        {
+            if (string.IsNullOrWhiteSpace(AiSourceUrl))
+            {
+                AiError = "Enter a source URL.";
+                return;
+            }
+
+            var request = new AiDraftFromUrlRequest
+            {
+                Url = AiSourceUrl.Trim(),
+                EngineCode = string.IsNullOrWhiteSpace(AiSourceEngineCode) ? null : AiSourceEngineCode.Trim(),
+                UseDbEngineList = AiUseDbEngines,
+                UseDbCategoryList = AiUseDbCategories,
+                UseDbTreeEdges = AiUseDbTreeEdges,
+                EnrichParts = AiEnrichParts,
+                ForcedEngineCodes = EngineCodes?.ToList() ?? new List<string>()
+            };
+
+            var response = await Http.PostAsJsonAsync("/api/admin/ingest/ai-draft", request);
+            if (!response.IsSuccessStatusCode)
+            {
+                var raw = await response.Content.ReadAsStringAsync();
+                AiError = string.IsNullOrWhiteSpace(raw)
+                    ? $"Fetch failed: {(int)response.StatusCode} {response.ReasonPhrase}"
+                    : $"Fetch failed: {(int)response.StatusCode} {response.ReasonPhrase} — {raw}";
+                return;
+            }
+
+            var payload = await response.Content.ReadFromJsonAsync<AiNormalizeResponse>();
+            if (payload is null)
+            {
+                AiError = "Empty response.";
+                return;
+            }
+
+            AiWarnings = payload.Warnings ?? Array.Empty<string>();
+            AiNormalizeErrors = payload.Errors ?? Array.Empty<string>();
+
+            AiNormalizedPayload = payload.Normalized is null
+                ? null
+                : payload.Normalized.Value.Deserialize<AdminIngestPayloadEnvelope>(new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+
+            if (!string.IsNullOrWhiteSpace(payload.NormalizedJson))
+            {
+                AiText = payload.NormalizedJson!;
+            }
+            else if (AiNormalizedPayload is not null)
+            {
+                AiText = JsonSerializer.Serialize(AiNormalizedPayload, new JsonSerializerOptions
+                {
+                    WriteIndented = true,
+                    DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
+                });
+            }
+
+            if (AiNormalizedPayload is not null && AiNormalizeErrors.Length == 0)
+            {
+                ApplyAiToEditor();
+            }
+        }
+        catch (Exception ex)
+        {
+            AiError = ex.Message;
+        }
+        finally
+        {
+            AiBusy = false;
+            StateHasChanged();
+        }
+    }
+
+    async Task NormalizeAiAsync()
+    {
+        if (AiBusy)
+            return;
+
+        AiBusy = true;
+        AiError = null;
+        AiNormalizedPayload = null;
+        AiWarnings = Array.Empty<string>();
+        AiNormalizeErrors = Array.Empty<string>();
+        StateHasChanged();
+
+        try
+        {
+            if (string.IsNullOrWhiteSpace(AiText))
+            {
+                AiError = "Paste AI JSON first.";
+                return;
+            }
+
+            using var doc = JsonDocument.Parse(AiText);
+            var response = await Http.PostAsJsonAsync("/api/admin/ingest/ai-normalize", doc.RootElement);
+
+            if (!response.IsSuccessStatusCode)
+            {
+                var raw = await response.Content.ReadAsStringAsync();
+                AiError = string.IsNullOrWhiteSpace(raw)
+                    ? $"Normalize failed: {(int)response.StatusCode} {response.ReasonPhrase}"
+                    : $"Normalize failed: {(int)response.StatusCode} {response.ReasonPhrase} — {raw}";
+                return;
+            }
+
+            var payload = await response.Content.ReadFromJsonAsync<AiNormalizeResponse>();
+            if (payload is null)
+            {
+                AiError = "Empty response.";
+                return;
+            }
+
+            AiWarnings = payload.Warnings ?? Array.Empty<string>();
+            AiNormalizeErrors = payload.Errors ?? Array.Empty<string>();
+
+            if (payload.Normalized is null)
+            {
+                AiError = AiNormalizeErrors.Length > 0
+                    ? string.Join("; ", AiNormalizeErrors)
+                    : "Response missing normalized payload.";
+                return;
+            }
+
+            AiNormalizedPayload = payload.Normalized.Value.Deserialize<AdminIngestPayloadEnvelope>(new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+            if (AiNormalizedPayload is null)
+            {
+                AiError = "Unable to deserialize normalized payload.";
+            }
+        }
+        catch (JsonException ex)
+        {
+            AiError = $"Invalid AI JSON: {ex.Message}";
+        }
+        catch (Exception ex)
+        {
+            AiError = ex.Message;
+        }
+        finally
+        {
+            AiBusy = false;
+            StateHasChanged();
+        }
+    }
+
+    void ApplyAiToEditor()
+    {
+        if (AiNormalizedPayload is null)
+            return;
+
+        try
+        {
+            var cloneJson = JsonSerializer.Serialize(AiNormalizedPayload, new JsonSerializerOptions
+            {
+                DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
+            });
+
+            var payload = JsonSerializer.Deserialize<AdminIngestPayloadEnvelope>(cloneJson, new JsonSerializerOptions { PropertyNameCaseInsensitive = true })
+                          ?? new AdminIngestPayloadEnvelope();
+
+            if (KeepManualPicks)
+            {
+                payload.Categories = CategorySlugs?.ToList() ?? new List<string>();
+                payload.Fitment = EngineCodes?.ToList() ?? new List<string>();
+            }
+
+            var compactJson = JsonSerializer.Serialize(payload, new JsonSerializerOptions
+            {
+                DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
+            });
+
+            using var doc = JsonDocument.Parse(compactJson);
+            JsonText = JsonSerializer.Serialize(doc.RootElement, new JsonSerializerOptions { WriteIndented = true });
+            ApplyFormFromJsonElement(doc.RootElement.Clone());
+            AiError = null;
+        }
+        catch (Exception ex)
+        {
+            AiError = ex.Message;
+        }
+    }
+
+    Task HandleBrandPicked(string brand)
+    {
+        Brand = brand;
+        RefreshJsonFromForm();
+        return Task.CompletedTask;
+    }
+
+    Task HandleVendorPicked(string vendor)
+    {
+        if (Offerings.Count == 0)
+            Offerings.Add(new OfferingsGrid.OfferingRow());
+        Offerings[0].VendorName = vendor;
+        RefreshJsonFromForm();
+        return Task.CompletedTask;
+    }
+
+    static List<string> ExtractStringList(JsonElement element, string property)
+    {
+        if (!element.TryGetProperty(property, out var prop) || prop.ValueKind != JsonValueKind.Array)
+            return new List<string>();
+
+        return prop.EnumerateArray()
+            .Select(x => x.GetString())
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Select(x => x!)
+            .ToList();
+    }
+
+    class AiNormalizeResponse
+    {
+        public bool? Ok { get; set; }
+        public JsonElement? Normalized { get; set; }
+        public string[]? Warnings { get; set; }
+        public string[]? Errors { get; set; }
+        [JsonPropertyName("normalized_json")]
+        public string? NormalizedJson { get; set; }
+    }
+
+    class AiDraftFromUrlRequest
+    {
+        public string? Url { get; set; }
+        public string? EngineCode { get; set; }
+        public bool UseDbEngineList { get; set; }
+        public bool UseDbCategoryList { get; set; }
+        public bool UseDbTreeEdges { get; set; }
+        public bool EnrichParts { get; set; }
+        public List<string>? ForcedEngineCodes { get; set; }
+    }
+}

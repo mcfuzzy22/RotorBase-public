@@ -1,0 +1,1097 @@
+@page "/admin/sockets"
+@rendermode InteractiveServer
+@using System.Net.Http.Json
+@using System.Linq
+@using Microsoft.JSInterop
+@inject HttpClient Http
+@inject UserSession Session
+@inject IJSRuntime JS
+@implements IAsyncDisposable
+
+<h1 class="mb-4 text-2xl font-semibold tracking-tight">Admin · Sockets &amp; Mappings</h1>
+
+@if (!Session.IsSignedIn)
+{
+    <div role="alert" class="rounded-md border border-blue-200 bg-blue-50 px-3 py-2 text-sm text-blue-800">
+        Sign in to view admin tools.
+    </div>
+}
+else if (!Session.IsAdmin)
+{
+    <div role="alert" class="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+        You need admin access to view socket diagnostics.
+    </div>
+}
+else
+{
+    <div class="mb-4 grid gap-3 md:grid-cols-[minmax(160px,220px)_auto_1fr] md:items-end">
+        <label class="flex items-center gap-2 text-sm text-foreground/80">
+            <span class="w-28 text-[13px] uppercase tracking-wide text-foreground/60">Engine ID</span>
+            <input class="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                   type="number" min="1" @bind="EngineId" />
+        </label>
+        <button class="inline-flex items-center justify-center rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition hover:bg-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:cursor-not-allowed disabled:bg-indigo-300"
+                @onclick="async () => await LoadAsync(true)" disabled="@_loading">
+            @(_loading ? "Loading…" : "Load")
+        </button>
+        <div class="text-sm text-foreground/60">
+            Check GLTF socket names and slot-to-category mappings for the selected engine.
+        </div>
+    </div>
+
+    <div class="mb-4 flex gap-2">
+        <button class="@TabButtonClass(OverviewTab)" @onclick="async () => await SetTabAsync(OverviewTab)">Overview</button>
+        <button class="@TabButtonClass(CreateTab)" @onclick="async () => await SetTabAsync(CreateTab)">Create</button>
+        <button class="@TabButtonClass(EdgesTab)" @onclick="async () => await SetTabAsync(EdgesTab)">Edges</button>
+    </div>
+
+    @if (Tab == OverviewTab)
+    {
+        <div class="mb-6 grid gap-3 md:grid-cols-4">
+            <div class="md:col-span-2 space-y-2">
+                <input class="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                       placeholder="Search category…"
+                       value="@CatQuery"
+                       @oninput="OnCatInput" />
+                @if (CatResults?.Any() == true)
+                {
+                    <div class="max-h-48 overflow-auto rounded-md border border-gray-200 bg-white shadow-sm">
+                        @foreach (var c in CatResults)
+                        {
+                            <button class="flex w-full items-center justify-between px-3 py-1.5 text-left text-sm hover:bg-gray-50"
+                                    @onclick="() => PickCategory(c.Id, c.Name)">
+                                <span>@c.Name</span>
+                                <span class="text-xs text-gray-500">@c.Key</span>
+                            </button>
+                        }
+                    </div>
+                }
+            </div>
+            <div class="md:col-span-2 space-y-2">
+                <input class="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                       placeholder="Search part…"
+                       value="@PartQuery"
+                       @oninput="OnPartInput" />
+                @if (PartResults?.Any() == true)
+                {
+                    <div class="max-h-48 overflow-auto rounded-md border border-gray-200 bg-white shadow-sm">
+                        @foreach (var p in PartResults)
+                        {
+                            <button class="flex w-full items-center justify-between px-3 py-1.5 text-left text-sm hover:bg-gray-50"
+                                    @onclick="() => PickPart(p.Id, p.Name)">
+                                <span>@p.Name</span>
+                                <span class="text-xs text-gray-500">@p.Sku</span>
+                            </button>
+                        }
+                    </div>
+                }
+            </div>
+            <div class="md:col-span-4 text-sm text-foreground/60">
+                Find sockets by category or part, toggle allowances, and keep the matrix view below for validation.
+            </div>
+        </div>
+
+        @if (!string.IsNullOrEmpty(_searchError))
+        {
+            <div role="alert" class="mb-3 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+                @_searchError
+            </div>
+        }
+
+        @if (_searchLoading)
+        {
+            <div class="mb-6 rounded-md border border-dashed border-gray-300 px-3 py-6 text-center text-sm text-gray-500">
+                Loading slots…
+            </div>
+        }
+        else if (Mode == "category" && SlotSearchRows?.Any() == true)
+        {
+            <h2 class="mb-2 text-lg font-semibold">
+                Slots allowing category: <span class="text-indigo-600">@PickedName</span>
+            </h2>
+            <div class="mb-6 overflow-auto rounded-xl border border-gray-200 shadow-sm">
+                <table class="min-w-[720px] w-full text-sm">
+                    <thead class="bg-gray-50 text-xs font-semibold uppercase tracking-wide text-gray-600">
+                        <tr>
+                            <th class="px-3 py-2 text-left">Subsystem</th>
+                            <th class="px-3 py-2 text-left">Slot</th>
+                            <th class="px-3 py-2 text-left">GLTF Socket</th>
+                            <th class="px-3 py-2 text-left">Mapped</th>
+                            <th class="px-3 py-2 text-right"></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var r in SlotSearchRows!)
+                        {
+                            <tr class="border-t">
+                                <td class="px-3 py-2">@r.SubsystemName</td>
+                                <td class="px-3 py-2">
+                                    <div class="font-medium">@r.SlotName</div>
+                                    <div class="text-xs text-gray-500">@r.SlotKey</div>
+                                </td>
+                                <td class="px-3 py-2"><code class="text-xs">@r.GltfNodePath</code></td>
+                                <td class="px-3 py-2">
+                                    <span class="inline-flex items-center gap-2">
+                                        <span class="h-2 w-2 rounded-full @(r.IsMapped ? "bg-emerald-500" : "bg-gray-300")"></span>
+                                        <span>@(r.IsMapped ? "Allowed" : "Not allowed")</span>
+                                    </span>
+                                </td>
+                                <td class="px-3 py-2 text-right space-x-2">
+                                    <button class="rounded-md border border-gray-300 px-2 py-1 text-xs font-medium text-gray-700 transition hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                                            @onclick="() => CopySocket(r.GltfNodePath)">
+                                        Copy socket
+                                    </button>
+                                    <button class="rounded-md border border-indigo-200 px-2 py-1 text-xs font-medium text-indigo-600 transition hover:bg-indigo-50 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                                            @onclick="() => ToggleCategory(r)">
+                                        @(r.IsMapped ? "Remove" : "Allow")
+                                    </button>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+        else if (Mode == "part" && SlotSearchRows?.Any() == true)
+        {
+            <h2 class="mb-2 text-lg font-semibold">
+                Slots allowing part: <span class="text-indigo-600">@PickedName</span>
+            </h2>
+            <div class="mb-6 overflow-auto rounded-xl border border-gray-200 shadow-sm">
+                <table class="min-w-[720px] w-full text-sm">
+                    <thead class="bg-gray-50 text-xs font-semibold uppercase tracking-wide text-gray-600">
+                        <tr>
+                            <th class="px-3 py-2 text-left">Subsystem</th>
+                            <th class="px-3 py-2 text-left">Slot</th>
+                            <th class="px-3 py-2 text-left">GLTF Socket</th>
+                            <th class="px-3 py-2 text-left">Mapped</th>
+                            <th class="px-3 py-2 text-right"></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var r in SlotSearchRows!)
+                        {
+                            <tr class="border-t">
+                                <td class="px-3 py-2">@r.SubsystemName</td>
+                                <td class="px-3 py-2">
+                                    <div class="font-medium">@r.SlotName</div>
+                                    <div class="text-xs text-gray-500">@r.SlotKey</div>
+                                </td>
+                                <td class="px-3 py-2"><code class="text-xs">@r.GltfNodePath</code></td>
+                                <td class="px-3 py-2">
+                                    <span class="inline-flex items-center gap-2">
+                                        <span class="h-2 w-2 rounded-full @(r.IsMapped ? "bg-emerald-500" : "bg-gray-300")"></span>
+                                        <span>@(r.IsMapped ? "Allowed" : "Not allowed")</span>
+                                    </span>
+                                </td>
+                                <td class="px-3 py-2 text-right space-x-2">
+                                    <button class="rounded-md border border-gray-300 px-2 py-1 text-xs font-medium text-gray-700 transition hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                                            @onclick="() => CopySocket(r.GltfNodePath)">
+                                        Copy socket
+                                    </button>
+                                    <button class="rounded-md border border-indigo-200 px-2 py-1 text-xs font-medium text-indigo-600 transition hover:bg-indigo-50 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                                            @onclick="() => TogglePart(r)">
+                                        @(r.IsMapped ? "Remove" : "Allow")
+                                    </button>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+        else if (!string.IsNullOrEmpty(Mode))
+        {
+            <div class="mb-6 rounded-md border border-dashed border-gray-300 px-3 py-6 text-center text-sm text-gray-500">
+                No sockets found for this selection.
+            </div>
+        }
+        else
+        {
+            <div class="mb-6 rounded-md border border-dashed border-gray-300 px-3 py-6 text-center text-sm text-gray-500">
+                Search for a category or part to begin editing mappings.
+            </div>
+        }
+
+        <hr class="my-6 border-border/60" />
+
+        @if (!string.IsNullOrEmpty(_matrixError))
+        {
+            <div role="alert" class="mb-3 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+                @_matrixError
+            </div>
+        }
+
+        @if (_loading)
+        {
+            <div class="rounded-md border border-dashed border-gray-300 px-3 py-6 text-center text-sm text-gray-500">
+                Loading slots…
+            </div>
+        }
+        else if (Rows is null)
+        {
+            <div class="rounded-md border border-dashed border-gray-300 px-3 py-6 text-center text-sm text-gray-500">
+                Enter an engine ID and click Load to see slot mappings.
+            </div>
+        }
+        else if (Rows.Count == 0)
+        {
+            <div class="rounded-md border border-dashed border-gray-300 px-3 py-6 text-center text-sm text-gray-500">
+                No slots found for engine @EngineId.
+            </div>
+        }
+        else
+        {
+            <div class="overflow-auto rounded-xl border border-gray-200 shadow-sm">
+                <table class="min-w-[900px] w-full text-sm">
+                    <thead class="bg-gray-50 text-xs font-semibold uppercase tracking-wide text-gray-600">
+                        <tr>
+                            <th class="px-3 py-2 text-left">Subsystem</th>
+                            <th class="px-3 py-2 text-left">Slot</th>
+                            <th class="px-3 py-2 text-left">GLTF Socket</th>
+                            <th class="px-3 py-2 text-left">Req / Cap</th>
+                            <th class="px-3 py-2 text-left">Allowed</th>
+                            <th class="px-3 py-2 text-left">Sample</th>
+                            <th class="px-3 py-2 text-left">Checks</th>
+                            <th class="px-3 py-2 text-right"></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var r in Rows)
+                        {
+                            <tr class="border-t border-gray-200">
+                                <td class="px-3 py-2 align-top">
+                                    <div class="font-medium text-gray-800">@r.SubsystemName</div>
+                                </td>
+                                <td class="px-3 py-2 align-top">
+                                    <div class="font-medium text-gray-900">@r.SlotName</div>
+                                    <div class="text-xs text-gray-500">@r.SlotKey</div>
+                                </td>
+                                <td class="px-3 py-2 align-top">
+                                    @if (!string.IsNullOrWhiteSpace(r.GltfNodePath))
+                                    {
+                                        <code class="rounded bg-slate-100 px-1.5 py-0.5 text-xs">@r.GltfNodePath</code>
+                                    }
+                                    else
+                                    {
+                                        <span class="text-xs text-gray-400">—</span>
+                                    }
+                                </td>
+                                <td class="px-3 py-2 align-top">
+                                    <span>@r.MinRequired / @r.Capacity</span>
+                                </td>
+                                <td class="px-3 py-2 align-top">
+                                    <div class="text-xs text-gray-600 space-y-0.5">
+                                        <div>Categories: <strong>@r.AllowedCategoryCount</strong></div>
+                                        <div>Parts: <strong>@r.AllowedPartCount</strong></div>
+                                    </div>
+                                </td>
+                                <td class="px-3 py-2 align-top">
+                                    @if (r.Categories?.Any() == true)
+                                    {
+                                        <div class="text-xs text-gray-700">@string.Join(", ", r.Categories!.Select(c => c.CategoryKey))</div>
+                                    }
+                                    else if (r.Parts?.Any() == true)
+                                    {
+                                        <div class="text-xs text-gray-700">@string.Join(", ", r.Parts!.Select(p => p.PartName))</div>
+                                    }
+                                    else
+                                    {
+                                        <span class="text-xs text-gray-400">—</span>
+                                    }
+                                </td>
+                                <td class="px-3 py-2 align-top">
+                                    <div class="flex flex-col gap-1 text-xs text-gray-600">
+                                        <span class="inline-flex items-center gap-2">
+                                            <span class="inline-flex h-2 w-2 rounded-full @(r.Validations.HasSocketName ? "bg-emerald-500" : "bg-rose-500")"></span>
+                                            Socket name
+                                        </span>
+                                        <span class="inline-flex items-center gap-2">
+                                            <span class="inline-flex h-2 w-2 rounded-full @(r.Validations.HasMapping ? "bg-emerald-500" : "bg-rose-500")"></span>
+                                            Has mapping
+                                        </span>
+                                    </div>
+                                </td>
+                                <td class="px-3 py-2 text-right align-top space-x-2">
+                                    <button class="rounded-md border border-gray-300 px-2 py-1 text-xs font-medium text-gray-700 transition hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                                            @onclick="() => CopySocket(r.GltfNodePath)">
+                                        Copy socket
+                                    </button>
+                                    <button class="rounded-md border border-indigo-200 px-2 py-1 text-xs font-medium text-indigo-600 transition hover:bg-indigo-50 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                                            @onclick="() => PingInViewer(r)" disabled="@string.IsNullOrWhiteSpace(r.GltfNodePath)">
+                                        Ping
+                                    </button>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+    }
+    else if (Tab == CreateTab)
+    {
+        @if (!string.IsNullOrEmpty(_adminError))
+        {
+            <div role="alert" class="mb-3 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+                @_adminError
+            </div>
+        }
+        else if (!string.IsNullOrEmpty(_adminSuccess))
+        {
+            <div class="mb-3 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
+                @_adminSuccess
+            </div>
+        }
+
+        <div class="grid gap-4 lg:grid-cols-2">
+            <div class="rounded-xl border border-gray-200 bg-white p-4">
+                <h3 class="mb-2 font-semibold">New Subsystem</h3>
+                <div class="space-y-2 text-sm">
+                    <label class="block text-foreground/70">
+                        Key
+                        <input class="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                               @bind="NewSub.Key" />
+                    </label>
+                    <label class="block text-foreground/70">
+                        Name
+                        <input class="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                               @bind="NewSub.Name" />
+                    </label>
+                    <label class="block text-foreground/70">
+                        Sort Order
+                        <input class="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                               type="number" @bind="NewSub.SortOrder" />
+                    </label>
+                    <label class="block text-foreground/70">
+                        GLTF Path (optional)
+                        <input class="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                               @bind="NewSub.GltfNodePath" />
+                    </label>
+                </div>
+                <button class="mt-4 inline-flex items-center justify-center rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:cursor-not-allowed disabled:bg-indigo-300"
+                        @onclick="CreateSubsystem" disabled="@(EngineId <= 0)">
+                    Create Subsystem
+                </button>
+            </div>
+
+            <div class="rounded-xl border border-gray-200 bg-white p-4">
+                <h3 class="mb-2 font-semibold">New Slot</h3>
+                <div class="space-y-2 text-sm">
+                    <label class="block text-foreground/70">
+                        Subsystem
+                        <select class="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                                @bind="NewSlot.SubsystemId">
+                            <option value="0">Select subsystem…</option>
+                            @foreach (var s in Subsystems)
+                            {
+                                <option value="@s.Id">@s.Name (@s.Key)</option>
+                            }
+                        </select>
+                    </label>
+                    <label class="block text-foreground/70">
+                        Key
+                        <input class="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                               @bind="NewSlot.Key" placeholder="centre_plate" />
+                    </label>
+                    <label class="block text-foreground/70">
+                        Name
+                        <input class="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                               @bind="NewSlot.Name" placeholder="Centre Plate" />
+                    </label>
+                    <label class="block text-foreground/70">
+                        GLTF Socket
+                        <input class="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                               @bind="NewSlot.GltfNodePath" placeholder="Socket_CentrePlate" />
+                    </label>
+                    <div class="grid grid-cols-2 gap-2">
+                        <label class="block text-foreground/70">
+                            Min
+                            <input class="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                                   type="number" @bind="NewSlot.MinRequired" />
+                        </label>
+                        <label class="block text-foreground/70">
+                            Cap
+                            <input class="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                                   type="number" @bind="NewSlot.Capacity" />
+                        </label>
+                    </div>
+                </div>
+                <button class="mt-4 inline-flex items-center justify-center rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:cursor-not-allowed disabled:bg-indigo-300"
+                        @onclick="CreateSlot" disabled="@(EngineId <= 0 || NewSlot.SubsystemId <= 0)">
+                    Create Slot
+                </button>
+            </div>
+        </div>
+
+        <div class="mt-4 rounded-xl border border-gray-200 bg-white p-4">
+            <h3 class="mb-2 font-semibold">Bulk: Create slots from GLB socket names</h3>
+            <p class="mb-3 text-sm text-foreground/70">Paste socket names exactly as they appear in the GLB (one per line).</p>
+            <textarea class="min-h-[140px] w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                      @bind="BulkSocketsText"
+                      placeholder="Socket_CentrePlate&#10;Socket_Eccentricshaft3-6&#10;Socket_Housing5 13b-1"></textarea>
+            <div class="mt-3 flex flex-col gap-3 md:flex-row md:items-end">
+                <label class="block text-sm text-foreground/70 md:max-w-xs">
+                    Subsystem
+                    <select class="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                            @bind="BulkSubsystemId">
+                        <option value="0">Select subsystem…</option>
+                        @foreach (var s in Subsystems)
+                        {
+                            <option value="@s.Id">@s.Name (@s.Key)</option>
+                        }
+                    </select>
+                </label>
+                <button class="inline-flex items-center justify-center rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:cursor-not-allowed disabled:bg-indigo-300"
+                        @onclick="BulkCreateSlots" disabled="@(EngineId <= 0 || BulkSubsystemId <= 0)">
+                    Create from GLB
+                </button>
+            </div>
+        </div>
+    }
+    else if (Tab == EdgesTab)
+    {
+        @if (!string.IsNullOrEmpty(_adminError))
+        {
+            <div role="alert" class="mb-3 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+                @_adminError
+            </div>
+        }
+        else if (!string.IsNullOrEmpty(_adminSuccess))
+        {
+            <div class="mb-3 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
+                @_adminSuccess
+            </div>
+        }
+
+        <div class="rounded-xl border border-gray-200 bg-white p-4">
+            <h3 class="mb-2 font-semibold">Add or update rule</h3>
+            <div class="grid gap-3 md:grid-cols-2 text-sm">
+                <label class="block text-foreground/70">
+                    From slot
+                    <select class="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                            @bind="Edge.FromSlotId">
+                        <option value="0">Select slot…</option>
+                        @foreach (var s in Slots)
+                        {
+                            <option value="@s.Id">@s.Name (@s.Key)</option>
+                        }
+                    </select>
+                </label>
+                <label class="block text-foreground/70">
+                    To slot
+                    <select class="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                            @bind="Edge.ToSlotId">
+                        <option value="0">Select slot…</option>
+                        @foreach (var s in Slots)
+                        {
+                            <option value="@s.Id">@s.Name (@s.Key)</option>
+                        }
+                    </select>
+                </label>
+                <label class="block text-foreground/70">
+                    Edge type
+                    <select class="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                            @bind="Edge.Edge">
+                        <option>REQUIRES</option>
+                        <option>EXCLUDES</option>
+                        <option>MATCH_ATTR</option>
+                    </select>
+                </label>
+                <label class="block text-foreground/70">
+                    Attribute key (for MATCH_ATTR)
+                    <input class="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                           @bind="Edge.AttributeKey" placeholder="attribute_key" />
+                </label>
+                <label class="md:col-span-2 block text-foreground/70">
+                    Description
+                    <input class="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                           @bind="Edge.Description" placeholder="Shown in diagnostics" />
+                </label>
+                <label class="md:col-span-2 block text-foreground/70">
+                    Fix hint
+                    <input class="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                           @bind="Edge.FixHint" placeholder="Suggested action for users" />
+                </label>
+            </div>
+            <button class="mt-4 inline-flex items-center justify-center rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:cursor-not-allowed disabled:bg-indigo-300"
+                    @onclick="SaveEdge" disabled="@(EngineId <= 0 || Edge.FromSlotId <= 0 || Edge.ToSlotId <= 0)">
+                Save Rule
+            </button>
+            @if (Slots.Count == 0)
+            {
+                <p class="mt-3 text-sm text-foreground/60">Load slots for this engine to populate the dropdowns.</p>
+            }
+        </div>
+    }
+}
+
+@code {
+    int EngineId { get; set; } = 1;
+
+    const string OverviewTab = "overview";
+    const string CreateTab = "create";
+    const string EdgesTab = "edges";
+
+    string Tab { get; set; } = OverviewTab;
+    List<SubsystemOption> Subsystems { get; set; } = new();
+    List<SlotOption> Slots { get; set; } = new();
+
+    UpsertSubsystemVM NewSub { get; set; } = new();
+    CreateSlotVM NewSlot { get; set; } = new() { MinRequired = 1, Capacity = 1 };
+    string BulkSocketsText { get; set; } = string.Empty;
+    long BulkSubsystemId { get; set; }
+
+    EdgeVM Edge { get; set; } = new();
+    string? _adminError;
+    string? _adminSuccess;
+
+    List<MatrixRow>? Rows;
+    List<SlotSearchRow>? SlotSearchRows;
+    List<CatVm>? CatResults;
+    List<PartVm>? PartResults;
+
+    string Mode { get; set; } = string.Empty;
+    long PickedId;
+    string PickedName = string.Empty;
+
+    string CatQuery { get; set; } = string.Empty;
+    string PartQuery { get; set; } = string.Empty;
+
+    bool _loading;
+    bool _searchLoading;
+    string? _matrixError;
+    string? _searchError;
+    IJSObjectReference? _engineModule;
+
+    record CatVm(long Id, string Key, string Name);
+    record PartVm(long Id, string Name, string? Sku, long? CategoryId);
+
+    record CategoryModel(long CategoryId, string CategoryKey, string CategoryName);
+    record PartModel(long PartId, string PartName);
+    record ValidationModel(bool HasMapping, bool HasSocketName);
+    record MatrixRow(long SlotId, string SlotKey, string SlotName, string SubsystemName,
+                     string? GltfNodePath, int MinRequired, int Capacity,
+                     int AllowedCategoryCount, int AllowedPartCount,
+                     List<CategoryModel>? Categories, List<PartModel>? Parts, ValidationModel Validations);
+
+    record SubsystemOption(long Id, string Key, string Name);
+    record SlotOption(long Id, string Key, string Name, long SubsystemId);
+
+    class UpsertSubsystemVM
+    {
+        public string Key { get; set; } = string.Empty;
+        public string Name { get; set; } = string.Empty;
+        public int SortOrder { get; set; }
+        public string? GltfNodePath { get; set; }
+    }
+
+    class CreateSlotVM
+    {
+        public long SubsystemId { get; set; }
+        public string Key { get; set; } = string.Empty;
+        public string Name { get; set; } = string.Empty;
+        public string? GltfNodePath { get; set; }
+        public int MinRequired { get; set; } = 1;
+        public int Capacity { get; set; } = 1;
+    }
+
+    class EdgeVM
+    {
+        public long FromSlotId { get; set; }
+        public long ToSlotId { get; set; }
+        public string Edge { get; set; } = "REQUIRES";
+        public string? AttributeKey { get; set; }
+        public string? Description { get; set; }
+        public string? FixHint { get; set; }
+        public int MinRequired { get; set; } = 1;
+    }
+
+    string TabButtonClass(string tab) => $"inline-flex items-center rounded-md px-3 py-1.5 text-sm font-medium transition {(Tab == tab ? "bg-indigo-600 text-white shadow" : "bg-slate-100 text-slate-700 hover:bg-slate-200")}";
+
+    async Task SetTabAsync(string tab)
+    {
+        Tab = tab;
+        _adminError = null;
+        _adminSuccess = null;
+        if (EngineId > 0 && (tab == CreateTab || tab == EdgesTab))
+        {
+            await RefreshListsAsync();
+        }
+        StateHasChanged();
+    }
+
+    async Task RefreshListsAsync()
+    {
+        if (EngineId <= 0)
+        {
+            Subsystems = new();
+            Slots = new();
+            return;
+        }
+
+        try
+        {
+            Subsystems = await Http.GetFromJsonAsync<List<SubsystemOption>>($"/api/admin/subsystems?engineId={EngineId}") ?? new();
+        }
+        catch
+        {
+            Subsystems = new();
+        }
+
+        try
+        {
+            Slots = await Http.GetFromJsonAsync<List<SlotOption>>($"/api/admin/slots?engineId={EngineId}") ?? new();
+        }
+        catch
+        {
+            Slots = new();
+        }
+
+        if (Subsystems.Count > 0)
+        {
+            if (NewSlot.SubsystemId == 0 || Subsystems.All(s => s.Id != NewSlot.SubsystemId))
+            {
+                NewSlot.SubsystemId = Subsystems[0].Id;
+            }
+
+            if (BulkSubsystemId == 0 || Subsystems.All(s => s.Id != BulkSubsystemId))
+            {
+                BulkSubsystemId = Subsystems[0].Id;
+            }
+        }
+        else
+        {
+            NewSlot.SubsystemId = 0;
+            BulkSubsystemId = 0;
+        }
+    }
+
+    class SlotSearchRow
+    {
+        public long SlotId { get; set; }
+        public string SlotKey { get; set; } = "";
+        public string SlotName { get; set; } = "";
+        public string? GltfNodePath { get; set; }
+        public string SubsystemName { get; set; } = "";
+        public bool IsMapped { get; set; }
+    }
+
+    record SlotCategoryPayload(long SlotId, long CategoryId);
+    record SlotPartPayload(long SlotId, long PartId);
+
+    
+    async Task CreateSubsystem()
+    {
+        _adminError = null;
+        _adminSuccess = null;
+
+        if (EngineId <= 0)
+        {
+            _adminError = "Enter an engine ID first.";
+            return;
+        }
+
+        try
+        {
+            await Http.PostAsJsonAsync("/api/admin/subsystems", new
+            {
+                EngineId,
+                Key = NewSub.Key,
+                Name = NewSub.Name,
+                SortOrder = NewSub.SortOrder,
+                GltfNodePath = string.IsNullOrWhiteSpace(NewSub.GltfNodePath) ? null : NewSub.GltfNodePath
+            });
+            NewSub = new();
+            _adminSuccess = "Subsystem created.";
+            await RefreshListsAsync();
+        }
+        catch (HttpRequestException ex)
+        {
+            _adminError = $"Create failed: {ex.Message}";
+        }
+    }
+
+    async Task CreateSlot()
+    {
+        _adminError = null;
+        _adminSuccess = null;
+
+        if (EngineId <= 0 || NewSlot.SubsystemId <= 0)
+        {
+            _adminError = "Select a subsystem first.";
+            return;
+        }
+
+        try
+        {
+            await Http.PostAsJsonAsync("/api/admin/slots", new
+            {
+                EngineId,
+                SubsystemId = NewSlot.SubsystemId,
+                Key = NewSlot.Key,
+                Name = NewSlot.Name,
+                GltfNodePath = string.IsNullOrWhiteSpace(NewSlot.GltfNodePath) ? null : NewSlot.GltfNodePath,
+                MinRequired = NewSlot.MinRequired,
+                Capacity = NewSlot.Capacity
+            });
+            _adminSuccess = "Slot created.";
+            var defaultSubsystem = BulkSubsystemId != 0 ? BulkSubsystemId : (Subsystems.FirstOrDefault()?.Id ?? 0);
+            NewSlot = new CreateSlotVM { SubsystemId = defaultSubsystem, MinRequired = 1, Capacity = 1 };
+            await RefreshListsAsync();
+            if (Tab == OverviewTab)
+            {
+                await LoadAsync();
+            }
+        }
+        catch (HttpRequestException ex)
+        {
+            _adminError = $"Create failed: {ex.Message}";
+        }
+    }
+
+    async Task BulkCreateSlots()
+    {
+        _adminError = null;
+        _adminSuccess = null;
+
+        if (EngineId <= 0 || BulkSubsystemId <= 0)
+        {
+            _adminError = "Select a subsystem first.";
+            return;
+        }
+
+        var names = BulkSocketsText
+            .Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+        if (names.Length == 0)
+        {
+            _adminError = "Enter at least one socket name.";
+            return;
+        }
+
+        try
+        {
+            await Http.PostAsJsonAsync("/api/admin/slots/bulk-from-sockets", new
+            {
+                EngineId,
+                SubsystemId = BulkSubsystemId,
+                SocketNames = names
+            });
+            _adminSuccess = $"Created or updated {names.Length} sockets.";
+            BulkSocketsText = string.Empty;
+            await RefreshListsAsync();
+            if (Tab == OverviewTab)
+            {
+                await LoadAsync();
+            }
+        }
+        catch (HttpRequestException ex)
+        {
+            _adminError = $"Bulk create failed: {ex.Message}";
+        }
+    }
+
+    async Task SaveEdge()
+    {
+        _adminError = null;
+        _adminSuccess = null;
+
+        if (EngineId <= 0 || Edge.FromSlotId <= 0 || Edge.ToSlotId <= 0)
+        {
+            _adminError = "Select both slots.";
+            return;
+        }
+
+        try
+        {
+            await Http.PostAsJsonAsync("/api/admin/slot-edges", new
+            {
+                EngineId,
+                Edge.FromSlotId,
+                Edge.ToSlotId,
+                Edge.Edge,
+                Edge.MinRequired,
+                Description = Edge.Description,
+                FixHint = Edge.FixHint,
+                AttributeKey = Edge.AttributeKey
+            });
+            _adminSuccess = "Rule saved.";
+        }
+        catch (HttpRequestException ex)
+        {
+            _adminError = $"Save failed: {ex.Message}";
+        }
+    }
+
+    async Task OnCatInput(ChangeEventArgs args)
+    {
+        CatQuery = args.Value?.ToString() ?? string.Empty;
+        await PerformCategorySearchAsync();
+    }
+
+    async Task OnPartInput(ChangeEventArgs args)
+    {
+        PartQuery = args.Value?.ToString() ?? string.Empty;
+        await PerformPartSearchAsync();
+    }
+
+    async Task PerformCategorySearchAsync()
+    {
+        if (CatQuery.Length < 2)
+        {
+            CatResults = null;
+            StateHasChanged();
+            return;
+        }
+
+        try
+        {
+            CatResults = await Http.GetFromJsonAsync<List<CatVm>>($"/api/admin/categories/lookup?q={Uri.EscapeDataString(CatQuery)}");
+        }
+        catch
+        {
+            CatResults = null;
+        }
+
+        StateHasChanged();
+    }
+
+    async Task PerformPartSearchAsync()
+    {
+        if (PartQuery.Length < 2)
+        {
+            PartResults = null;
+            StateHasChanged();
+            return;
+        }
+
+        try
+        {
+            PartResults = await Http.GetFromJsonAsync<List<PartVm>>($"/api/admin/parts/lookup?q={Uri.EscapeDataString(PartQuery)}");
+        }
+        catch
+        {
+            PartResults = null;
+        }
+
+        StateHasChanged();
+    }
+
+    async Task PickCategory(long id, string name)
+    {
+        if (EngineId <= 0)
+        {
+            _searchError = "Enter an engine ID to load slot mappings.";
+            StateHasChanged();
+            return;
+        }
+
+        Mode = "category";
+        PickedId = id;
+        PickedName = name;
+        CatResults = null;
+        CatQuery = name;
+        _searchError = null;
+
+        await RefreshSearchAsync();
+    }
+
+    async Task PickPart(long id, string name)
+    {
+        if (EngineId <= 0)
+        {
+            _searchError = "Enter an engine ID to load slot mappings.";
+            StateHasChanged();
+            return;
+        }
+
+        Mode = "part";
+        PickedId = id;
+        PickedName = name;
+        PartResults = null;
+        PartQuery = name;
+        _searchError = null;
+
+        await RefreshSearchAsync();
+    }
+
+    async Task RefreshSearchAsync()
+    {
+        if (Mode != "category" && Mode != "part")
+            return;
+
+        _searchLoading = true;
+        _searchError = null;
+        StateHasChanged();
+
+        try
+        {
+            if (Mode == "category")
+            {
+                SlotSearchRows = await Http.GetFromJsonAsync<List<SlotSearchRow>>($"/api/admin/engine/{EngineId}/slots/by-category/{PickedId}");
+            }
+            else
+            {
+                SlotSearchRows = await Http.GetFromJsonAsync<List<SlotSearchRow>>($"/api/admin/engine/{EngineId}/slots/by-part/{PickedId}");
+            }
+        }
+        catch (Exception ex) when (ex is HttpRequestException or NotSupportedException)
+        {
+            SlotSearchRows = new List<SlotSearchRow>();
+            _searchError = $"Failed to load slot mappings: {ex.Message}";
+        }
+        finally
+        {
+            _searchLoading = false;
+            StateHasChanged();
+        }
+    }
+
+    async Task ToggleCategory(SlotSearchRow row)
+    {
+        if (Mode != "category")
+            return;
+
+        try
+        {
+            if (!row.IsMapped)
+            {
+                await Http.PostAsJsonAsync("/api/admin/slot/map-category", new SlotCategoryPayload(row.SlotId, PickedId));
+            }
+            else
+            {
+                var request = new HttpRequestMessage(HttpMethod.Delete, "/api/admin/slot/map-category")
+                {
+                    Content = JsonContent.Create(new SlotCategoryPayload(row.SlotId, PickedId))
+                };
+                await Http.SendAsync(request);
+            }
+        }
+        catch (HttpRequestException ex)
+        {
+            _searchError = $"Update failed: {ex.Message}";
+        }
+
+        await RefreshSearchAsync();
+    }
+
+    async Task TogglePart(SlotSearchRow row)
+    {
+        if (Mode != "part")
+            return;
+
+        try
+        {
+            if (!row.IsMapped)
+            {
+                await Http.PostAsJsonAsync("/api/admin/slot/map-part", new SlotPartPayload(row.SlotId, PickedId));
+            }
+            else
+            {
+                var request = new HttpRequestMessage(HttpMethod.Delete, "/api/admin/slot/map-part")
+                {
+                    Content = JsonContent.Create(new SlotPartPayload(row.SlotId, PickedId))
+                };
+                await Http.SendAsync(request);
+            }
+        }
+        catch (HttpRequestException ex)
+        {
+            _searchError = $"Update failed: {ex.Message}";
+        }
+
+        await RefreshSearchAsync();
+    }
+
+    async Task LoadAsync(bool refreshLists = false)
+    {
+        if (EngineId <= 0)
+        {
+            _matrixError = "Enter a valid engine ID.";
+            Rows = null;
+            return;
+        }
+
+        if (refreshLists)
+        {
+            await RefreshListsAsync();
+        }
+
+        _loading = true;
+        _matrixError = null;
+        StateHasChanged();
+
+        try
+        {
+            Rows = await Http.GetFromJsonAsync<List<MatrixRow>>($"/api/admin/engine/{EngineId}/slots-matrix");
+        }
+        catch (HttpRequestException ex)
+        {
+            _matrixError = $"Failed to load slots: {ex.Message}";
+            Rows = new List<MatrixRow>();
+        }
+        catch (NotSupportedException ex)
+        {
+            _matrixError = $"Unexpected response: {ex.Message}";
+            Rows = new List<MatrixRow>();
+        }
+        finally
+        {
+            _loading = false;
+            StateHasChanged();
+        }
+    }
+
+
+
+    async Task CopySocket(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return;
+        }
+
+        try
+        {
+            await JS.InvokeVoidAsync("navigator.clipboard.writeText", path);
+        }
+        catch (JSException)
+        {
+            // clipboard API not available; swallow
+        }
+    }
+
+    async Task PingInViewer(MatrixRow row)
+    {
+        if (string.IsNullOrWhiteSpace(row.GltfNodePath))
+        {
+            return;
+        }
+
+        try
+        {
+            _engineModule ??= await JS.InvokeAsync<IJSObjectReference>("import", "/js/engine3d.js");
+            await _engineModule.InvokeVoidAsync("blinkSocketByPath", row.GltfNodePath);
+        }
+        catch (JSException)
+        {
+            // viewer not active on this page; safe to ignore
+        }
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (_engineModule is not null)
+        {
+            try
+            {
+                await _engineModule.DisposeAsync();
+            }
+            catch (JSException)
+            {
+                // ignore disposal issues
+            }
+        }
+    }
+}

@@ -1,0 +1,638 @@
+@using System.Net.Http.Json
+@using System.Text.Json
+@using System.Text.Json.Nodes
+@using System.Text.Json.Serialization
+@inject HttpClient Http
+
+<h1>Ingest From URL</h1>
+
+<div class="card mb-3">
+    <div class="card-body">
+        <div class="row g-3 align-items-end">
+            <div class="col-md-6">
+                <label class="form-label">Source URL</label>
+                <input @bind="Url" class="form-control" placeholder="https://..." />
+            </div>
+            <div class="col-md-3">
+                <label class="form-label">Engine Code (optional)</label>
+                <input @bind="EngineCode" class="form-control" placeholder="13B-REW-S6" />
+            </div>
+            <div class="col-md-3">
+                <label class="form-label">Tree Name (for edges)</label>
+                <input @bind="TreeName" class="form-control" placeholder="Default" />
+            </div>
+            <div class="col-md-12">
+                <div class="form-check mt-4">
+                    <input class="form-check-input" type="checkbox" id="useDbEngines" @bind="UseDbEngines" />
+                    <label class="form-check-label" for="useDbEngines">Let AI choose from DB engines</label>
+                </div>
+            </div>
+            <div class="col-md-12">
+                <label class="form-label">Force Engine Families</label>
+                <div class="d-flex flex-wrap gap-3">
+                    @foreach (var engine in EngineOptions)
+                    {
+                        var checkboxId = $"engine_{engine.Code}";
+                        <div class="form-check form-check-inline">
+                            <input class="form-check-input" type="checkbox" id="@checkboxId" checked="@SelectedEngineCodes.Contains(engine.Code)" @onchange="e => ToggleEngine(engine.Code, e.Value)" />
+                            <label class="form-check-label" for="@checkboxId">@engine.Label</label>
+                        </div>
+                    }
+                </div>
+                <div class="input-group mt-2">
+                    <span class="input-group-text">Extra Codes</span>
+                    <input class="form-control" @bind="AdditionalEngineCodes" placeholder="comma-separated e.g. 13B-REW-S6,13B-REW-S7" />
+                </div>
+                <div class="form-text">Selected codes (and extras) will be applied to requirements and fitment.</div>
+            </div>
+            <div class="col-md-12">
+                <button class="btn btn-secondary me-2" @onclick="SeedEngines" disabled="@IsBusy">Seed Engine Families</button>
+                <div class="form-check form-check-inline me-2">
+                    <input class="form-check-input" type="checkbox" id="useDbCats" @bind="UseDbCategories" />
+                    <label class="form-check-label" for="useDbCats">Include DB categories</label>
+                </div>
+                <div class="form-check form-check-inline me-2">
+                    <input class="form-check-input" type="checkbox" id="useDbEdges" @bind="UseDbTreeEdges" />
+                    <label class="form-check-label" for="useDbEdges">Include DB tree edges</label>
+                </div>
+                <div class="form-check form-check-inline me-2">
+                    <input class="form-check-input" type="checkbox" id="enrichParts" @bind="EnrichParts" />
+                    <label class="form-check-label" for="enrichParts">Enrich part details</label>
+                </div>
+                <button class="btn btn-primary me-2" @onclick="Preview" disabled="@IsBusy">Preview</button>
+                <button class="btn btn-success me-2" @onclick="Approve" disabled="@(!CanApprove)">Approve & Ingest</button>
+                <button class="btn btn-outline-secondary" @onclick="Deny" disabled="@(PreviewPayload is null)">Deny</button>
+                @if (!string.IsNullOrEmpty(Message))
+                {
+                    <span class="ms-3">@Message</span>
+                }
+            </div>
+        </div>
+    </div>
+</div>
+
+@if (PreviewPayload is not null)
+{
+    <div class="row">
+        <div class="col-md-4">
+            <div class="card mb-3">
+                <div class="card-header">Summary</div>
+                <div class="card-body">
+                    <ul class="list-unstyled mb-0">
+                        <li><strong>Engine:</strong> @PreviewPayload.engine?.code (@PreviewPayload.engine?.rotor_count)</li>
+                        @if (PreviewPayload.engine_codes is not null && PreviewPayload.engine_codes.Count > 0)
+                        {
+                            <li><strong>Forced Engines:</strong> @string.Join(", ", PreviewPayload.engine_codes)</li>
+                        }
+                        <li><strong>Categories:</strong> @PreviewPayload.categories?.Count</li>
+                        <li><strong>Parts:</strong> @PreviewPayload.parts?.Count</li>
+                        <li><strong>Vendors:</strong> @PreviewPayload.vendors?.Count</li>
+                        <li><strong>Offerings:</strong> @PreviewPayload.offerings?.Count</li>
+                        <li><strong>Plans:</strong> @PreviewPayload.plans?.Count</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-8">
+            <div class="card mb-3">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <span>Preview JSON (editable)</span>
+                    <div>
+                        <button class="btn btn-sm btn-outline-secondary" @onclick="FormatPreview" disabled="@IsBusy">Format</button>
+                    </div>
+                </div>
+                <div class="card-body">
+                    <textarea class="form-control font-monospace" rows="20" @bind="PreviewJson"></textarea>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    @if (_partAssignments.Count > 0 && _leafCategories.Count > 0)
+    {
+        <div class="card mb-3">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <span>Part Categorization</span>
+                <span class="text-muted small">Select a leaf category for each SKU</span>
+            </div>
+            <div class="card-body">
+                <div class="table-responsive">
+                    <table class="table table-sm align-middle">
+                        <thead class="table-light">
+                            <tr>
+                                <th style="width: 15%">SKU</th>
+                                <th>Name</th>
+                                <th style="width: 35%">Category</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var part in _partAssignments)
+                            {
+                                <tr>
+                                    <td>@(string.IsNullOrWhiteSpace(part.Sku) ? "—" : part.Sku)</td>
+                                    <td>@part.Name</td>
+                                    <td>
+                                        <select class="form-select form-select-sm" @onchange="e => OnAssignmentChanged(part, e)">
+                                            <option value="">Select category…</option>
+                                            @foreach (var cat in _leafCategories)
+                                            {
+                                                <option value="@cat.Slug" selected="@string.Equals(cat.Slug, part.SelectedSlug, StringComparison.OrdinalIgnoreCase)">@cat.Name (@cat.Slug)</option>
+                                            }
+                                        </select>
+                                        @if (!string.IsNullOrWhiteSpace(part.OriginalSlug) && !string.Equals(part.OriginalSlug, part.SelectedSlug, StringComparison.OrdinalIgnoreCase))
+                                        {
+                                            <div class="text-muted small">Model suggested: @part.OriginalSlug</div>
+                                        }
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    }
+}
+
+<div class="row">
+    <div class="col-md-12">
+        <div class="card mb-3">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <span>Manual JSON Ingest</span>
+                <div>
+                    <button class="btn btn-sm btn-outline-secondary me-2" @onclick="FormatManual" disabled="@IsBusy">Format</button>
+                    <button class="btn btn-sm btn-success" @onclick="IngestManual" disabled="@IsBusy">Ingest JSON</button>
+                </div>
+            </div>
+            <div class="card-body">
+                <textarea class="form-control font-monospace" rows="14" placeholder="Paste a full ingestion payload JSON here..." @bind="ManualJson"></textarea>
+                <div class="form-text">This bypasses Perplexity. The JSON must match the ingestion schema: engine, tree, categories, requirements, brands, parts, components, part_categories, fitment, vendors, offerings, plans.</div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row">
+    <div class="col-md-12">
+        <div class="card border-danger mb-3">
+            <div class="card-header text-danger">Danger Zone: Wipe Data</div>
+            <div class="card-body">
+                <div class="row g-3 align-items-end">
+                    <div class="col-md-3">
+                        <label class="form-label">Scope</label>
+                        <select class="form-select" @bind="WipeScope">
+                            <option value="catalog">Catalog (parts, categories, vendors, offerings, plans)</option>
+                            <option value="all">All (also builds, carts, orders)</option>
+                        </select>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="form-check mt-4">
+                            <input class="form-check-input" type="checkbox" id="wipeEngines" @bind="WipeIncludeEngines" />
+                            <label class="form-check-label" for="wipeEngines">Include Engine Families</label>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <label class="form-label">Type WIPE to confirm</label>
+                        <input class="form-control" @bind="WipeConfirm" />
+                    </div>
+                    <div class="col-md-3">
+                        <button class="btn btn-danger" @onclick="WipeData" disabled="@IsBusy">Wipe Now</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+@code {
+    string Url = string.Empty;
+    string? EngineCode;
+    bool UseDbEngines = true;
+    bool UseDbCategories = true;
+    bool UseDbTreeEdges = true;
+    string TreeName = "Default";
+    bool EnrichParts = true;
+    bool IsBusy;
+    string? Message;
+
+    List<EngineOption> EngineOptions = new();
+    HashSet<string> SelectedEngineCodes = new(StringComparer.OrdinalIgnoreCase);
+    string AdditionalEngineCodes = string.Empty;
+
+    IngestPayload? PreviewPayload;
+    string? PreviewJson;
+    string ManualJson = string.Empty;
+    // Danger zone wipe controls
+    string WipeScope = "catalog"; // catalog | all
+    bool WipeIncludeEngines = false;
+    string WipeConfirm = string.Empty;
+
+    bool CanApprove => PreviewPayload is not null && !IsBusy;
+
+    readonly List<LeafCategory> _leafCategories = new();
+    readonly List<PartAssignment> _partAssignments = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadEngineOptions();
+        await LoadLeafCategoriesAsync();
+    }
+
+    async Task Preview()
+    {
+        Message = null;
+        PreviewPayload = null;
+        PreviewJson = null;
+        if (string.IsNullOrWhiteSpace(Url)) { Message = "Please enter a URL."; return; }
+        IsBusy = true;
+        try
+        {
+            var url = $"/api/ingest/preview-from-url?use_db_engines={UseDbEngines.ToString().ToLowerInvariant()}&use_db_categories={UseDbCategories.ToString().ToLowerInvariant()}&use_db_tree_edges={UseDbTreeEdges.ToString().ToLowerInvariant()}&enrich_parts={EnrichParts.ToString().ToLowerInvariant()}";
+            var forcedCodes = CollectEngineCodes();
+            var resp = await Http.PostAsJsonAsync(url, new
+            {
+                url = Url,
+                engine_code = EngineCode,
+                tree_name = TreeName,
+                use_db_engines = UseDbEngines,
+                use_db_categories = UseDbCategories,
+                use_db_tree_edges = UseDbTreeEdges,
+                enrich_parts = EnrichParts,
+                engine_codes = forcedCodes.Count > 0 ? forcedCodes : null
+            });
+            if (!resp.IsSuccessStatusCode)
+            {
+                Message = $"Preview failed: {(int)resp.StatusCode} {resp.ReasonPhrase}";
+                return;
+            }
+            var raw = await resp.Content.ReadAsStringAsync();
+            // Pretty-print for editing, but keep structure
+            try
+            {
+                var doc = System.Text.Json.JsonDocument.Parse(raw);
+                PreviewJson = System.Text.Json.JsonSerializer.Serialize(doc.RootElement, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
+            }
+            catch
+            {
+                PreviewJson = raw; // fallback: show as-is
+            }
+            // Also parse a lightweight summary for counts (safe failures)
+            try { PreviewPayload = System.Text.Json.JsonSerializer.Deserialize<IngestPayload>(raw); } catch { PreviewPayload = null; }
+            if (PreviewPayload?.engine_codes is not null && PreviewPayload.engine_codes.Count > 0)
+            {
+                SelectedEngineCodes = new HashSet<string>(PreviewPayload.engine_codes, StringComparer.OrdinalIgnoreCase);
+            }
+
+            ExtractPartAssignments(PreviewJson ?? raw);
+        }
+        catch (Exception ex)
+        {
+            Message = ex.Message;
+        }
+        finally { IsBusy = false; }
+    }
+
+    async Task Approve()
+    {
+        if (PreviewPayload is null) return;
+        IsBusy = true; Message = null;
+        try
+        {
+            if (!ApplyPartAssignmentsToPreviewJson())
+            {
+                IsBusy = false;
+                return;
+            }
+            if (string.IsNullOrWhiteSpace(PreviewJson)) { Message = "Nothing to approve. Preview JSON is empty."; return; }
+            var content = new StringContent(PreviewJson, System.Text.Encoding.UTF8, "application/json");
+            var resp = await Http.PostAsync("/api/ingest/from-json", content);
+            if (!resp.IsSuccessStatusCode)
+            {
+                var body = await resp.Content.ReadAsStringAsync();
+                Message = $"Ingest failed: {(int)resp.StatusCode} {resp.ReasonPhrase} — {body}";
+                return;
+            }
+            var result = await resp.Content.ReadAsStringAsync();
+            Message = $"Ingested successfully: {result}";
+        }
+        catch (Exception ex)
+        {
+            Message = ex.Message;
+        }
+        finally { IsBusy = false; }
+    }
+
+    async Task FormatPreview()
+    {
+        if (string.IsNullOrWhiteSpace(PreviewJson)) return;
+        try
+        {
+            var doc = System.Text.Json.JsonDocument.Parse(PreviewJson);
+            PreviewJson = System.Text.Json.JsonSerializer.Serialize(doc.RootElement, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
+            ExtractPartAssignments(PreviewJson);
+        }
+        catch (Exception ex)
+        {
+            Message = "JSON format error: " + ex.Message;
+        }
+    }
+
+    async Task IngestManual()
+    {
+        IsBusy = true; Message = null;
+        try
+        {
+            if (string.IsNullOrWhiteSpace(ManualJson)) { Message = "Manual JSON is empty."; return; }
+            var content = new StringContent(ManualJson, System.Text.Encoding.UTF8, "application/json");
+            var resp = await Http.PostAsync("/api/ingest/from-json", content);
+            if (!resp.IsSuccessStatusCode)
+            {
+                var body = await resp.Content.ReadAsStringAsync();
+                Message = $"Ingest failed: {(int)resp.StatusCode} {resp.ReasonPhrase} — {body}";
+                return;
+            }
+            var result = await resp.Content.ReadAsStringAsync();
+            Message = $"Ingested successfully: {result}";
+        }
+        catch (Exception ex)
+        {
+            Message = ex.Message;
+        }
+        finally { IsBusy = false; }
+    }
+
+    void FormatManual()
+    {
+        if (string.IsNullOrWhiteSpace(ManualJson)) return;
+        try
+        {
+            var doc = System.Text.Json.JsonDocument.Parse(ManualJson);
+            ManualJson = System.Text.Json.JsonSerializer.Serialize(doc.RootElement, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
+        }
+        catch (Exception ex)
+        {
+            Message = "JSON format error: " + ex.Message;
+        }
+    }
+
+    async Task WipeData()
+    {
+        IsBusy = true; Message = null;
+        try
+        {
+            if (WipeConfirm != "WIPE") { Message = "Type WIPE to confirm."; return; }
+            var payload = new { scope = WipeScope, include_engines = WipeIncludeEngines, confirm = WipeConfirm };
+            var resp = await Http.PostAsJsonAsync("/api/admin/wipe", payload);
+            if (!resp.IsSuccessStatusCode)
+            {
+                var body = await resp.Content.ReadAsStringAsync();
+                Message = $"Wipe failed: {(int)resp.StatusCode} {resp.ReasonPhrase} — {body}";
+                return;
+            }
+            var result = await resp.Content.ReadAsStringAsync();
+            Message = $"Wipe completed: {result}";
+        }
+        catch (Exception ex)
+        {
+            Message = ex.Message;
+        }
+        finally { IsBusy = false; }
+    }
+
+    void Deny()
+    {
+        PreviewPayload = null;
+        PreviewJson = null;
+        Message = "Ingest denied and discarded.";
+    }
+
+    async Task SeedEngines()
+    {
+        IsBusy = true; Message = null;
+        try
+        {
+            var resp = await Http.PostAsync("/api/seed/engines", null);
+            if (!resp.IsSuccessStatusCode)
+            {
+                Message = $"Seeding failed: {(int)resp.StatusCode} {resp.ReasonPhrase}";
+                return;
+            }
+            var json = await resp.Content.ReadAsStringAsync();
+            Message = $"Engine families seeded. {json}";
+        }
+        catch (Exception ex)
+        {
+            Message = ex.Message;
+        }
+        finally { IsBusy = false; }
+    }
+    // Typed payload for the preview UI
+    List<string> CollectEngineCodes()
+    {
+        var set = new HashSet<string>(SelectedEngineCodes, StringComparer.OrdinalIgnoreCase);
+        if (!string.IsNullOrWhiteSpace(EngineCode)) set.Add(EngineCode);
+        if (!string.IsNullOrWhiteSpace(AdditionalEngineCodes))
+        {
+            var extras = AdditionalEngineCodes.Split(new[] { ',', ';', '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            foreach (var code in extras)
+                set.Add(code);
+        }
+        return set.ToList();
+    }
+
+    async Task LoadEngineOptions()
+    {
+        try
+        {
+            var engines = await Http.GetFromJsonAsync<List<EngineFamilyDto>>("/api/engine-families");
+            if (engines != null)
+            {
+                EngineOptions = engines
+                    .OrderBy(e => e.code)
+                    .Select(e => new EngineOption(e.code, e.rotor_count.HasValue ? $"{e.code} ({e.rotor_count} rotors)" : e.code))
+                    .ToList();
+            }
+        }
+        catch
+        {
+            // ignore fetch errors; options list will remain empty
+        }
+    }
+
+    async Task LoadLeafCategoriesAsync()
+    {
+        try
+        {
+            var results = await Http.GetFromJsonAsync<List<LeafCategory>>("/api/admin/categories?leafOnly=true&pageSize=500");
+            if (results is not null && results.Count > 0)
+            {
+                _leafCategories.Clear();
+                _leafCategories.AddRange(results.OrderBy(c => c.Name));
+            }
+        }
+        catch
+        {
+            // likely not signed in as admin; ignore
+        }
+    }
+
+    void ToggleEngine(string code, object? value)
+    {
+        bool isChecked = value switch
+        {
+            bool b => b,
+            string s when bool.TryParse(s, out var parsed) => parsed,
+            _ => false
+        };
+        if (isChecked)
+            SelectedEngineCodes.Add(code);
+        else
+            SelectedEngineCodes.Remove(code);
+    }
+
+    public class IngestPayload
+    {
+        public Engine? engine { get; set; }
+        public Tree? tree { get; set; }
+        public List<Category>? categories { get; set; }
+        public List<object>? requirements { get; set; }
+        public List<object>? brands { get; set; }
+        public List<object>? parts { get; set; }
+        public List<object>? components { get; set; }
+        public List<object>? part_categories { get; set; }
+        public List<object>? fitment { get; set; }
+        public List<string>? engine_codes { get; set; }
+        public List<object>? vendors { get; set; }
+        public List<object>? offerings { get; set; }
+        public List<object>? plans { get; set; }
+    }
+    public class Engine { public string? code { get; set; } public int? rotor_count { get; set; } }
+    public class Tree { public string? name { get; set; } }
+    public class Category { public string? name { get; set; } public string? slug { get; set; } }
+
+    record EngineFamilyDto(
+        [property: JsonPropertyName("engine_family_id")] long engine_family_id,
+        [property: JsonPropertyName("code")] string code,
+        [property: JsonPropertyName("rotor_count")] int? rotor_count,
+        [property: JsonPropertyName("years_start")] int? years_start,
+        [property: JsonPropertyName("years_end")] int? years_end,
+        [property: JsonPropertyName("slot_count")] int slot_count,
+        [property: JsonPropertyName("scene_gltf_uri")] string? scene_gltf_uri);
+    record EngineOption(string Code, string Label);
+
+    class LeafCategory
+    {
+        [JsonPropertyName("category_id")] public long CategoryId { get; set; }
+        [JsonPropertyName("slug")] public string Slug { get; set; } = string.Empty;
+        [JsonPropertyName("name")] public string? Name { get; set; }
+    }
+
+    class PartAssignment
+    {
+        public string? Sku { get; set; }
+        public string? Name { get; set; }
+        public string? OriginalSlug { get; set; }
+        public string? SelectedSlug { get; set; }
+    }
+
+    void ExtractPartAssignments(string json)
+    {
+        _partAssignments.Clear();
+        JsonNode? root;
+        try
+        {
+            root = JsonNode.Parse(json);
+        }
+        catch
+        {
+            return;
+        }
+
+        var parts = root?["parts"] as JsonArray;
+        var categories = root?["part_categories"] as JsonArray;
+        if (parts is null)
+            return;
+
+        var slugMap = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        if (categories is not null)
+        {
+            foreach (var node in categories.OfType<JsonObject>())
+            {
+                var partSku = node["part_sku"]?.GetValue<string>();
+                var slug = node["category_slug"]?.GetValue<string>();
+                if (!string.IsNullOrWhiteSpace(partSku) && !string.IsNullOrWhiteSpace(slug))
+                {
+                    slugMap[partSku] = slug;
+                }
+            }
+        }
+
+        var allowed = new HashSet<string>(_leafCategories.Select(c => c.Slug).Where(s => !string.IsNullOrWhiteSpace(s)), StringComparer.OrdinalIgnoreCase);
+
+        foreach (var item in parts.OfType<JsonObject>())
+        {
+            var sku = item["sku"]?.GetValue<string>();
+            var name = item["name"]?.GetValue<string>();
+            string? slug = null;
+            if (!string.IsNullOrWhiteSpace(sku) && slugMap.TryGetValue(sku, out var mapped))
+            {
+                slug = mapped;
+            }
+
+            string? selected = slug is not null && allowed.Contains(slug) ? slug : null;
+
+            _partAssignments.Add(new PartAssignment
+            {
+                Sku = string.IsNullOrWhiteSpace(sku) ? null : sku,
+                Name = name,
+                OriginalSlug = slug,
+                SelectedSlug = selected
+            });
+        }
+    }
+
+    bool ApplyPartAssignmentsToPreviewJson()
+    {
+        if (string.IsNullOrWhiteSpace(PreviewJson) || _partAssignments.Count == 0)
+            return true;
+
+        JsonNode? root;
+        try
+        {
+            root = JsonNode.Parse(PreviewJson);
+        }
+        catch (Exception ex)
+        {
+            Message = "Unable to apply category overrides: " + ex.Message;
+            return false;
+        }
+
+        if (root is not JsonObject obj)
+            return true;
+
+        var categories = obj["part_categories"] as JsonArray;
+        if (categories is null)
+            return true;
+
+        foreach (var entry in categories.OfType<JsonObject>())
+        {
+            var partSku = entry["part_sku"]?.GetValue<string>();
+            if (string.IsNullOrWhiteSpace(partSku)) continue;
+            var assignment = _partAssignments.FirstOrDefault(p => string.Equals(p.Sku, partSku, StringComparison.OrdinalIgnoreCase));
+            if (assignment is null) continue;
+            var slug = assignment.SelectedSlug ?? assignment.OriginalSlug;
+            if (string.IsNullOrWhiteSpace(slug)) continue;
+            entry["category_slug"] = slug;
+        }
+
+        PreviewJson = obj.ToJsonString(new JsonSerializerOptions { WriteIndented = true });
+        try { PreviewPayload = JsonSerializer.Deserialize<IngestPayload>(PreviewJson); } catch { }
+        return true;
+    }
+
+    void OnAssignmentChanged(PartAssignment assignment, ChangeEventArgs e)
+    {
+        var value = e.Value?.ToString();
+        assignment.SelectedSlug = string.IsNullOrWhiteSpace(value) ? null : value;
+    }
+}

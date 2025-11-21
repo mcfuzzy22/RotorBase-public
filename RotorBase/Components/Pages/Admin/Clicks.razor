@@ -1,0 +1,405 @@
+@page "/admin/clicks"
+@rendermode InteractiveServer
+@using System.Net.Http.Json
+@using System.Text.Json.Serialization
+@inject HttpClient Http
+@inject UserSession Session
+
+<h1 class="text-2xl font-semibold tracking-tight mb-4">Admin · Click Attribution</h1>
+
+@if (!Session.IsSignedIn)
+{
+    <div role="alert" class="rounded-md border border-blue-200 bg-blue-50 text-blue-800 px-3 py-2 text-sm">Sign in to view admin reports.</div>
+}
+else if (!Session.IsAdmin)
+{
+    <div role="alert" class="rounded-md border border-amber-200 bg-amber-50 text-amber-800 px-3 py-2 text-sm">You need admin access to view click attribution.</div>
+}
+else
+{
+    <!-- Filters -->
+    <div class="mb-3 rounded-xl border border-gray-200 bg-white shadow-sm">
+        <div class="p-4">
+            <div class="grid grid-cols-1 md:grid-cols-12 gap-2">
+                <div class="md:col-span-3 flex flex-col">
+                    <label class="text-sm font-medium text-gray-700">From</label>
+                    <input type="date" class="mt-1 rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                           @bind="From" @bind:format="yyyy-MM-dd" />
+                </div>
+                <div class="md:col-span-3 flex flex-col">
+                    <label class="text-sm font-medium text-gray-700">To</label>
+                    <input type="date" class="mt-1 rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                           @bind="To" @bind:format="yyyy-MM-dd" />
+                </div>
+                <div class="md:col-span-3 flex flex-col">
+                    <label class="text-sm font-medium text-gray-700">Vendor</label>
+                    <input class="mt-1 rounded-md border border-gray-300 px-3 py-2 text-sm placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                           placeholder="e.g. Mazdatrix" @bind="Vendor" />
+                </div>
+                <div class="md:col-span-3 flex flex-col">
+                    <label class="text-sm font-medium text-gray-700">SKU</label>
+                    <input class="mt-1 rounded-md border border-gray-300 px-3 py-2 text-sm placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                           placeholder="e.g. APX-001" @bind="Sku" />
+                </div>
+
+                <div class="md:col-span-6 flex flex-col">
+                    <label class="text-sm font-medium text-gray-700">Search</label>
+                    <input class="mt-1 rounded-md border border-gray-300 px-3 py-2 text-sm placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                           placeholder="part/vendor text" @bind="Q" />
+                </div>
+                <div class="md:col-span-3 flex flex-col">
+                    <label class="text-sm font-medium text-gray-700">Build ID</label>
+                    <input type="number" class="mt-1 rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                           @bind="BuildId" />
+                </div>
+                <div class="md:col-span-3 flex flex-col">
+                    <label class="text-sm font-medium text-gray-700">Sort</label>
+                    <select class="mt-1 rounded-md border border-gray-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                            @bind="Sort">
+                        <option value="recent">Recent</option>
+                        <option value="vendor">Vendor</option>
+                        <option value="part">Part</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="mt-3 flex flex-wrap gap-2">
+                <button class="inline-flex items-center rounded-md bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-50"
+                        @onclick="SearchAsync" disabled="_loading">Search</button>
+                <button class="inline-flex items-center rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-50"
+                        @onclick="ResetAsync" disabled="_loading">Reset</button>
+                <a class="inline-flex items-center rounded-md border border-gray-800 bg-white px-4 py-2 text-sm font-medium text-gray-800 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-gray-900"
+                   href="@ExportHref" target="_blank" rel="noopener">Export CSV</a>
+            </div>
+        </div>
+    </div>
+
+    @if (!string.IsNullOrWhiteSpace(_error))
+    {
+        <div role="alert" class="mb-3 rounded-md border border-red-200 bg-red-50 text-red-800 px-3 py-2 text-sm">@_error</div>
+    }
+
+    @if (_loading)
+    {
+        <div class="flex items-center gap-2 text-sm text-gray-600">
+            <div class="h-5 w-5 animate-spin rounded-full border-2 border-gray-300 border-t-transparent" aria-hidden="true"></div>
+            <span>Loading clicks…</span>
+        </div>
+    }
+    else
+    {
+        <!-- Table -->
+        <div class="rounded-xl border border-gray-200 bg-white shadow-sm">
+            <div class="overflow-auto rounded-t-xl">
+                <table class="min-w-full text-sm">
+                    <thead class="bg-gray-50">
+                        <tr>
+                            <th class="px-3 py-2 text-left font-semibold text-gray-700">Time</th>
+                            <th class="px-3 py-2 text-left font-semibold text-gray-700">Part</th>
+                            <th class="px-3 py-2 text-left font-semibold text-gray-700">Vendor</th>
+                            <th class="px-3 py-2 text-left font-semibold text-gray-700">Build</th>
+                            <th class="px-3 py-2 text-left font-semibold text-gray-700">Referrer</th>
+                            <th class="px-3 py-2 text-left font-semibold text-gray-700">UTM</th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-gray-100">
+                        @if (Rows.Count == 0)
+                        {
+                            <tr>
+                                <td colspan="6" class="px-3 py-6 text-center text-gray-500">No clicks</td>
+                            </tr>
+                        }
+                        else
+                        {
+                            @foreach (var row in Rows)
+                            {
+                                <tr>
+                                    <td class="px-3 py-2">@row.ClickedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</td>
+                                    <td class="px-3 py-2">
+                                        <div class="font-semibold">@row.PartName</div>
+                                        <div class="text-xs text-gray-500">@row.Sku</div>
+                                    </td>
+                                    <td class="px-3 py-2">@row.VendorName</td>
+                                    <td class="px-3 py-2">
+                                        @if (row.BuildId.HasValue)
+                                        {
+                                            <a class="text-indigo-600 hover:underline" href="/builder/@row.BuildId">#@row.BuildId</a>
+                                        }
+                                    </td>
+                                    <td class="px-3 py-2">
+                                        <div class="max-w-[240px] truncate" title="@row.Referrer">@row.Referrer</div>
+                                    </td>
+                                    <td class="px-3 py-2 text-xs text-gray-600">
+                                        @if (!string.IsNullOrWhiteSpace(row.UtmSource))
+                                        {
+                                            <span>src=@row.UtmSource </span>
+                                        }
+                                        @if (!string.IsNullOrWhiteSpace(row.UtmMedium))
+                                        {
+                                            <span>· med=@row.UtmMedium </span>
+                                        }
+                                        @if (!string.IsNullOrWhiteSpace(row.UtmCampaign))
+                                        {
+                                            <span>· cmp=@row.UtmCampaign</span>
+                                        }
+                                    </td>
+                                </tr>
+                            }
+                        }
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- Footer / Pagination -->
+            <div class="flex items-center justify-between border-t border-gray-200 px-4 py-3">
+                <div class="text-sm text-gray-600">Total: @Total</div>
+                <div class="flex items-center gap-2">
+                    <button class="inline-flex items-center rounded-md border border-gray-300 bg-white px-2.5 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+                            disabled="@(!_canGoPrev)" @onclick="PrevAsync">Prev</button>
+                    <span class="text-sm text-gray-600">Page @_page</span>
+                    <button class="inline-flex items-center rounded-md border border-gray-300 bg-white px-2.5 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+                            disabled="@(!_canGoNext)" @onclick="NextAsync">Next</button>
+                </div>
+            </div>
+        </div>
+
+        @if (Summary is not null && (Summary.ByVendor.Count > 0 || Summary.ByPart.Count > 0))
+        {
+            <div class="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div class="rounded-xl border border-gray-200 bg-white shadow-sm h-full">
+                    <div class="p-4">
+                        <h6 class="mb-2 text-sm font-semibold text-gray-800">Top vendors</h6>
+                        <ul class="mb-0 space-y-1 text-sm">
+                            @foreach (var vendorRow in Summary.ByVendor)
+                            {
+                                <li>@vendorRow.Vendor — <strong>@vendorRow.Clicks</strong></li>
+                            }
+                        </ul>
+                    </div>
+                </div>
+                <div class="rounded-xl border border-gray-200 bg-white shadow-sm h-full">
+                    <div class="p-4">
+                        <h6 class="mb-2 text-sm font-semibold text-gray-800">Top parts</h6>
+                        <ul class="mb-0 space-y-1 text-sm">
+                            @foreach (var partRow in Summary.ByPart)
+                            {
+                                <li>@partRow.Sku — <strong>@partRow.Clicks</strong></li>
+                            }
+                        </ul>
+                    </div>
+                </div>
+            </div>
+        }
+    }
+}
+
+@code {
+    // C# block unchanged from your original (only the markup above was converted to Tailwind)
+    private bool _loading;
+    private string? _error;
+    private DateTime? From;
+    private DateTime? To;
+    private string? Vendor;
+    private string? Sku;
+    private string? Q;
+    private long? BuildId;
+    private string Sort = "recent";
+    private int _page = 1;
+    private int _pageSize = 50;
+    private int Total;
+    private List<ClickRow> Rows { get; set; } = new();
+    private SummaryDto? Summary { get; set; }
+
+    private bool _canGoPrev => _page > 1;
+    private bool _canGoNext => _page * _pageSize < Total;
+
+    private string ExportHref => $"/api/admin/clicks/export.csv?from={ToIso(From)}&to={ToIso(To)}&vendor={Uri.EscapeDataString(Vendor ?? string.Empty)}&sku={Uri.EscapeDataString(Sku ?? string.Empty)}&buildId={(BuildId?.ToString() ?? string.Empty)}&q={Uri.EscapeDataString(Q ?? string.Empty)}";
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (Session.IsSignedIn && Session.IsAdmin)
+        {
+            await RefreshAsync(resetPage: true);
+        }
+    }
+
+    private async Task SearchAsync()
+    {
+        _page = 1;
+        await RefreshAsync();
+    }
+
+    private async Task ResetAsync()
+    {
+        From = null;
+        To = null;
+        Vendor = null;
+        Sku = null;
+        Q = null;
+        BuildId = null;
+        Sort = "recent";
+        _page = 1;
+        _pageSize = 50;
+        await RefreshAsync();
+    }
+
+    private async Task PrevAsync()
+    {
+        if (_page <= 1)
+            return;
+
+        _page--;
+        await RefreshAsync();
+    }
+
+    private async Task NextAsync()
+    {
+        if (!_canGoNext)
+            return;
+
+        _page++;
+        await RefreshAsync();
+    }
+
+    private async Task RefreshAsync(bool resetPage = false)
+    {
+        if (resetPage)
+            _page = 1;
+
+        _loading = true;
+        _error = null;
+        await InvokeAsync(StateHasChanged);
+
+        try
+        {
+            var baseUrl = $"/api/admin/clicks?from={ToIso(From)}&to={ToIso(To)}&vendor={Uri.EscapeDataString(Vendor ?? string.Empty)}&sku={Uri.EscapeDataString(Sku ?? string.Empty)}&buildId={(BuildId?.ToString() ?? string.Empty)}&q={Uri.EscapeDataString(Q ?? string.Empty)}&page={_page}&pageSize={_pageSize}&sort={Sort}";
+            var listResponse = await Http.GetFromJsonAsync<ClickListResponse>(baseUrl);
+
+            if (listResponse is null)
+            {
+                Rows = new List<ClickRow>();
+                Total = 0;
+            }
+            else
+            {
+                Rows = listResponse.Rows ?? new List<ClickRow>();
+                Total = listResponse.Total;
+                _page = listResponse.Page;
+                _pageSize = listResponse.PageSize;
+            }
+
+            Summary = await Http.GetFromJsonAsync<SummaryDto>($"/api/admin/clicks/summary?from={ToIso(From)}&to={ToIso(To)}");
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+            Summary = null;
+        }
+        finally
+        {
+            _loading = false;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private static string? ToIso(DateTime? value) => value?.ToString("yyyy-MM-dd");
+
+    private sealed class ClickListResponse
+    {
+        [JsonPropertyName("rows")]
+        public List<ClickRow>? Rows { get; set; }
+
+        [JsonPropertyName("total")]
+        public int Total { get; set; }
+
+        [JsonPropertyName("page")]
+        public int Page { get; set; }
+
+        [JsonPropertyName("pageSize")]
+        public int PageSize { get; set; }
+    }
+
+    private sealed class ClickRow
+    {
+        [JsonPropertyName("click_id")]
+        public long ClickId { get; set; }
+
+        [JsonPropertyName("clicked_at")]
+        public DateTime ClickedAt { get; set; }
+
+        [JsonPropertyName("part_id")]
+        public long PartId { get; set; }
+
+        [JsonPropertyName("sku")]
+        public string? Sku { get; set; }
+
+        [JsonPropertyName("part_name")]
+        public string? PartName { get; set; }
+
+        [JsonPropertyName("vendor_id")]
+        public long VendorId { get; set; }
+
+        [JsonPropertyName("vendor_name")]
+        public string? VendorName { get; set; }
+
+        [JsonPropertyName("build_id")]
+        public long? BuildId { get; set; }
+
+        [JsonPropertyName("referrer")]
+        public string? Referrer { get; set; }
+
+        [JsonPropertyName("utm_source")]
+        public string? UtmSource { get; set; }
+
+        [JsonPropertyName("utm_medium")]
+        public string? UtmMedium { get; set; }
+
+        [JsonPropertyName("utm_campaign")]
+        public string? UtmCampaign { get; set; }
+    }
+
+    private sealed class SummaryDto
+    {
+        [JsonPropertyName("total")]
+        public int Total { get; set; }
+
+        [JsonPropertyName("byVendor")]
+        public List<SummaryVendor> ByVendor { get; set; } = new();
+
+        [JsonPropertyName("byPart")]
+        public List<SummaryPart> ByPart { get; set; } = new();
+
+        [JsonPropertyName("byDay")]
+        public List<SummaryDay> ByDay { get; set; } = new();
+    }
+
+    private sealed class SummaryVendor
+    {
+        [JsonPropertyName("vendor")]
+        public string? Vendor { get; set; }
+
+        [JsonPropertyName("clicks")]
+        public int Clicks { get; set; }
+    }
+
+    private sealed class SummaryPart
+    {
+        [JsonPropertyName("sku")]
+        public string? Sku { get; set; }
+
+        [JsonPropertyName("name")]
+        public string? Name { get; set; }
+
+        [JsonPropertyName("clicks")]
+        public int Clicks { get; set; }
+    }
+
+    private sealed class SummaryDay
+    {
+        [JsonPropertyName("day")]
+        public DateTime? Day { get; set; }
+
+        [JsonPropertyName("clicks")]
+        public int Clicks { get; set; }
+    }
+}

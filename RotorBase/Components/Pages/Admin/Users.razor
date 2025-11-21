@@ -1,0 +1,473 @@
+@page "/admin/users"
+@rendermode InteractiveServer
+@using System.Linq
+@using System.Net.Http
+@using System.Net.Http.Json
+@using System.Text.Json.Serialization
+@inject HttpClient Http
+@inject UserSession Session
+@inject NavigationManager Nav
+@inject Microsoft.JSInterop.IJSRuntime JS
+@implements IDisposable
+
+<h1 class="mb-3 text-2xl font-semibold">Admin · Users</h1>
+
+@if (!string.IsNullOrEmpty(AlertMessage))
+{
+    <div class="@AlertCss" role="alert">@AlertMessage</div>
+}
+
+@if (IsLoading)
+{
+    <div class="flex items-center gap-2 text-gray-700">
+        <div class="h-4 w-4 animate-spin rounded-full border-2 border-indigo-600 border-t-transparent" aria-hidden="true"></div>
+        <span class="text-sm">Loading users…</span>
+    </div>
+}
+else if (!Session.IsSignedIn)
+{
+    <div class="rounded-md border border-sky-200 bg-sky-50 px-4 py-2 text-sm text-sky-800" role="alert">
+        Sign in to view admin tools.
+    </div>
+}
+else if (!Session.IsAdmin)
+{
+    <div class="rounded-md border border-amber-200 bg-amber-50 px-4 py-2 text-sm text-amber-800" role="alert">
+        You need admin access to view this page.
+    </div>
+}
+else
+{
+    <!-- Search card -->
+    <div class="mb-4 rounded-xl border border-gray-200 bg-white shadow-sm">
+        <div class="flex flex-wrap items-center gap-3 p-3">
+            <div class="grow">
+                <div class="relative">
+                    <input class="w-full rounded-md border border-gray-300 px-3 py-2 pl-9 text-sm text-gray-800 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                           placeholder="Search email or display name" value="@Search" @oninput="OnSearchInput" />
+                    <span class="pointer-events-none absolute left-2 top-2.5 text-gray-400">🔎</span>
+                </div>
+            </div>
+            <button class="inline-flex items-center rounded-md border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+                    @onclick="LoadUsersAsync">
+                Search
+            </button>
+        </div>
+    </div>
+
+    <!-- Users table -->
+    <div class="rounded-xl border border-gray-200 bg-white shadow-sm">
+        <div class="p-0">
+            @if (_users.Count == 0)
+            {
+                <div class="p-4 text-sm text-gray-500">No users found.</div>
+            }
+            else
+            {
+                <div class="overflow-x-auto">
+                    <table class="min-w-full text-left text-sm">
+                        <thead class="bg-gray-50 text-xs uppercase text-gray-500">
+                            <tr>
+                                <th class="px-3 py-2">Email</th>
+                                <th class="px-3 py-2">Name</th>
+                                <th class="px-3 py-2">Plan</th>
+                                <th class="px-3 py-2">Active / Total</th>
+                                <th class="px-3 py-2">Admin</th>
+                                <th class="px-3 py-2">Status</th>
+                                <th class="px-3 py-2">Joined</th>
+                                <th class="px-3 py-2 text-right">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody class="divide-y divide-gray-100">
+                            @foreach (var user in _users)
+                            {
+                                <tr>
+                                    <td class="px-3 py-2">@user.Email</td>
+                                    <td class="px-3 py-2">@(string.IsNullOrWhiteSpace(user.DisplayName) ? "—" : user.DisplayName)</td>
+                                    <td class="px-3 py-2">
+                                        <select class="w-40 rounded-md border border-gray-300 bg-white px-2 py-1 text-xs text-gray-800 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                                                @onchange="async args => await ChangePlanAsync(user, args.Value?.ToString())">
+                                            <option value="">(none)</option>
+                                            @foreach (var plan in _plans)
+                                            {
+                                                <option value="@plan.Code" selected="@(string.Equals(plan.Code, user.PlanCode, StringComparison.OrdinalIgnoreCase))">
+                                                    @plan.Code
+                                                </option>
+                                            }
+                                        </select>
+                                    </td>
+                                    <td class="px-3 py-2 whitespace-nowrap">@user.ActiveBuilds / @user.TotalBuilds</td>
+                                    <td class="px-3 py-2">
+                                        <!-- Tailwind switch -->
+                                        <label class="relative inline-flex cursor-pointer items-center">
+                                            <input type="checkbox" class="peer sr-only"
+                                                   checked="@user.IsAdmin"
+                                                   @onchange="async args => await ToggleAdminAsync(user, args.Value)" />
+                                            <span class="h-5 w-9 rounded-full bg-gray-300 transition peer-checked:bg-emerald-600"></span>
+                                            <span class="absolute left-0.5 top-0.5 h-4 w-4 rounded-full bg-white shadow transition peer-checked:translate-x-4"></span>
+                                        </label>
+                                    </td>
+                                    <td class="px-3 py-2">
+                                        @if (user.IsBanned)
+                                        {
+                                            <span class="inline-flex items-center rounded-full bg-rose-100 px-2 py-0.5 text-xs font-medium text-rose-700">Banned</span>
+                                        }
+                                        else
+                                        {
+                                            <span class="inline-flex items-center rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-700">Active</span>
+                                        }
+                                    </td>
+                                    <td class="px-3 py-2 whitespace-nowrap">@user.CreatedAt.ToLocalTime().ToString("g")</td>
+                                    <td class="px-3 py-2 text-right">
+                                        <div class="flex flex-wrap justify-end gap-2">
+                                            <button class="@BanButtonClass(user)"
+                                                    disabled="@(_banBusy.Contains(user.UserId))"
+                                                    @onclick="async () => await ToggleBanAsync(user)">
+                                                @(user.IsBanned ? "Unban" : "Ban")
+                                            </button>
+                                            <button class="inline-flex items-center rounded-md border border-rose-200 bg-rose-50 px-2.5 py-1.5 text-xs font-medium text-rose-700 hover:bg-rose-100 disabled:opacity-60"
+                                                    disabled="@(_deleteBusy.Contains(user.UserId))"
+                                                    @onclick="async () => await DeleteBuildsAsync(user)">
+                                                Delete Builds
+                                            </button>
+                                            <button class="inline-flex items-center rounded-md border border-gray-300 bg-white px-2.5 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50"
+                                                    @onclick="() => ViewBuilds(user.UserId)">
+                                                View Builds
+                                            </button>
+                                        </div>
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            }
+        </div>
+    </div>
+}
+
+@code {
+    private readonly List<AdminUserRow> _users = new();
+    private readonly List<PlanRow> _plans = new();
+    private readonly HashSet<long> _banBusy = new();
+    private readonly HashSet<long> _deleteBusy = new();
+
+    private bool IsLoading = true;
+
+    // Tailwind alert classes (replaces Bootstrap)
+    private string? AlertMessage;
+    private string AlertCss = "rounded-md border border-red-200 bg-red-50 px-4 py-2 text-sm text-red-700";
+    private const string SuccessAlertCss = "rounded-md border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm text-emerald-700";
+
+    private string? Search;
+
+    protected override async Task OnInitializedAsync()
+    {
+        Session.Changed += OnSessionChanged;
+        await Session.HydrateAsync();
+        if (!Session.IsSignedIn)
+        {
+            IsLoading = false;
+            return;
+        }
+
+        if (Session.IsAdmin)
+        {
+            await LoadPlansAsync();
+            await LoadUsersAsync();
+        }
+        else
+        {
+            IsLoading = false;
+        }
+    }
+
+    private async Task LoadPlansAsync()
+    {
+        try
+        {
+            var rows = await Http.GetFromJsonAsync<List<PlanRow>>("/api/plans");
+            _plans.Clear();
+            if (rows is not null)
+            {
+                _plans.AddRange(rows.OrderBy(p => p.MonthlyPrice));
+            }
+        }
+        catch (Exception ex)
+        {
+            SetAlert($"Failed to load plans: {ex.Message}");
+        }
+    }
+
+    private async Task LoadUsersAsync()
+    {
+        if (!Session.IsSignedIn || !Session.IsAdmin)
+        {
+            _users.Clear();
+            IsLoading = false;
+            StateHasChanged();
+            return;
+        }
+
+        IsLoading = true;
+        StateHasChanged();
+
+        try
+        {
+            AlertMessage = null;
+            var uri = string.IsNullOrWhiteSpace(Search)
+                ? "/api/admin/users"
+                : $"/api/admin/users?q={Uri.EscapeDataString(Search)}";
+            var rows = await Http.GetFromJsonAsync<List<AdminUserRow>>(uri);
+            _users.Clear();
+            if (rows is not null)
+            {
+                _users.AddRange(rows);
+            }
+        }
+        catch (Exception ex)
+        {
+            SetAlert($"Failed to load users: {ex.Message}");
+        }
+        finally
+        {
+            IsLoading = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task ChangePlanAsync(AdminUserRow user, string? code)
+    {
+        if (string.IsNullOrWhiteSpace(code))
+        {
+            return;
+        }
+
+        var response = await Http.PostAsJsonAsync($"/api/admin/users/{user.UserId}/plan", new { plan_code = code });
+        if (!response.IsSuccessStatusCode)
+        {
+            var message = await response.Content.ReadAsStringAsync();
+            SetAlert($"Plan update failed: {message}");
+            return;
+        }
+
+        await LoadUsersAsync();
+    }
+
+    private async Task ToggleAdminAsync(AdminUserRow user, object? value)
+    {
+        var isAdmin = value switch
+        {
+            bool b => b,
+            string s => s == "true" || s == "on" || s == "1",
+            _ => false
+        };
+
+        var response = await PatchAsync($"/api/admin/users/{user.UserId}", new { is_admin = isAdmin });
+        if (!response.IsSuccessStatusCode)
+        {
+            var message = await response.Content.ReadAsStringAsync();
+            SetAlert($"Failed to update admin flag: {message}");
+            return;
+        }
+
+        await LoadUsersAsync();
+    }
+
+    private async Task ToggleBanAsync(AdminUserRow user)
+    {
+        if (_banBusy.Contains(user.UserId))
+        {
+            return;
+        }
+
+        _banBusy.Add(user.UserId);
+        StateHasChanged();
+
+        string? successMessage = null;
+        try
+        {
+            var response = await PatchAsync($"/api/admin/users/{user.UserId}", new { is_banned = !user.IsBanned });
+            if (!response.IsSuccessStatusCode)
+            {
+                var message = await response.Content.ReadAsStringAsync();
+                SetAlert($"Failed to update ban status: {message}");
+                return;
+            }
+
+            successMessage = user.IsBanned
+                ? $"Unbanned {user.Email}."
+                : $"Banned {user.Email}.";
+        }
+        catch (Exception ex)
+        {
+            SetAlert($"Failed to update ban status: {ex.Message}");
+            return;
+        }
+        finally
+        {
+            _banBusy.Remove(user.UserId);
+            StateHasChanged();
+        }
+
+        await LoadUsersAsync();
+        if (successMessage is not null)
+        {
+            SetAlert(successMessage, SuccessAlertCss);
+        }
+    }
+
+    private async Task DeleteBuildsAsync(AdminUserRow user)
+    {
+        if (_deleteBusy.Contains(user.UserId))
+        {
+            return;
+        }
+
+        var confirmed = await ConfirmDangerAsync($"Delete all builds for {user.Email}?");
+        if (!confirmed)
+        {
+            return;
+        }
+
+        _deleteBusy.Add(user.UserId);
+        StateHasChanged();
+
+        string? successMessage = null;
+        try
+        {
+            var response = await Http.DeleteAsync($"/api/admin/users/{user.UserId}/builds");
+            if (!response.IsSuccessStatusCode)
+            {
+                var message = await response.Content.ReadAsStringAsync();
+                SetAlert($"Failed to delete builds: {message}");
+                return;
+            }
+
+            var payload = await response.Content.ReadFromJsonAsync<DeleteResult>();
+            var deleted = payload?.Deleted ?? 0;
+            successMessage = deleted == 1
+                ? $"Deleted 1 build for {user.Email}."
+                : $"Deleted {deleted} builds for {user.Email}.";
+        }
+        catch (Exception ex)
+        {
+            SetAlert($"Failed to delete builds: {ex.Message}");
+            return;
+        }
+        finally
+        {
+            _deleteBusy.Remove(user.UserId);
+            StateHasChanged();
+        }
+
+        await LoadUsersAsync();
+        if (successMessage is not null)
+        {
+            SetAlert(successMessage, SuccessAlertCss);
+        }
+    }
+
+    private Task<HttpResponseMessage> PatchAsync<T>(string uri, T payload)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Patch, uri)
+        {
+            Content = JsonContent.Create(payload)
+        };
+        return Http.SendAsync(request);
+    }
+
+    private async Task OnSearchInput(ChangeEventArgs args)
+    {
+        Search = args.Value?.ToString();
+        await LoadUsersAsync();
+    }
+
+    private void ViewBuilds(long userId) => Nav.NavigateTo($"/admin/users/{userId}/builds");
+
+    private async Task<bool> ConfirmDangerAsync(string message)
+    {
+        try
+        {
+            return await JS.InvokeAsync<bool>("confirm", message);
+        }
+        catch
+        {
+            return true;
+        }
+    }
+
+    private static string BanButtonClass(AdminUserRow user) => user.IsBanned
+        ? "inline-flex items-center rounded-md border border-emerald-200 bg-emerald-50 px-2.5 py-1.5 text-xs font-medium text-emerald-700 hover:bg-emerald-100 disabled:opacity-60"
+        : "inline-flex items-center rounded-md border border-red-200 bg-red-50 px-2.5 py-1.5 text-xs font-medium text-red-700 hover:bg-red-100 disabled:opacity-60";
+
+    private void SetAlert(string message, string css = "rounded-md border border-red-200 bg-red-50 px-4 py-2 text-sm text-red-700")
+    {
+        AlertMessage = message;
+        AlertCss = css;
+        StateHasChanged();
+    }
+
+    private void OnSessionChanged()
+    {
+        _ = InvokeAsync(async () =>
+        {
+            if (!Session.IsSignedIn)
+            {
+                _users.Clear();
+                IsLoading = false;
+                StateHasChanged();
+                return;
+            }
+
+            if (!Session.IsAdmin)
+            {
+                _users.Clear();
+                IsLoading = false;
+                StateHasChanged();
+                return;
+            }
+
+            if (_plans.Count == 0)
+            {
+                await LoadPlansAsync();
+            }
+
+            await LoadUsersAsync();
+        });
+    }
+
+    public void Dispose()
+    {
+        Session.Changed -= OnSessionChanged;
+    }
+
+    private sealed class AdminUserRow
+    {
+        [JsonPropertyName("user_id")] public long UserId { get; set; }
+        [JsonPropertyName("email")] public string Email { get; set; } = string.Empty;
+        [JsonPropertyName("display_name")] public string? DisplayName { get; set; }
+        [JsonPropertyName("is_admin")] public bool IsAdmin { get; set; }
+        [JsonPropertyName("is_banned")] public bool IsBanned { get; set; }
+        [JsonPropertyName("plan_code")] public string? PlanCode { get; set; }
+        [JsonPropertyName("max_active_builds")] public int? MaxActiveBuilds { get; set; }
+        [JsonPropertyName("max_total_builds")] public int? MaxTotalBuilds { get; set; }
+        [JsonPropertyName("active_builds")] public int ActiveBuilds { get; set; }
+        [JsonPropertyName("total_builds")] public int TotalBuilds { get; set; }
+        [JsonPropertyName("created_at")] public DateTime CreatedAt { get; set; }
+    }
+
+    private sealed class PlanRow
+    {
+        [JsonPropertyName("plan_id")] public long PlanId { get; set; }
+        [JsonPropertyName("code")] public string Code { get; set; } = string.Empty;
+        [JsonPropertyName("name")] public string Name { get; set; } = string.Empty;
+        [JsonPropertyName("monthly_price")] public decimal MonthlyPrice { get; set; }
+        [JsonPropertyName("currency")] public string Currency { get; set; } = string.Empty;
+    }
+
+    private sealed class DeleteResult
+    {
+        [JsonPropertyName("deleted")] public int Deleted { get; set; }
+    }
+}

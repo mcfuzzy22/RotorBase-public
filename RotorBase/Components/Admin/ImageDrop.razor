@@ -1,0 +1,93 @@
+@using System.Net.Http.Headers
+@using System.Text.Json
+@using Microsoft.AspNetCore.Components.Forms
+@inject HttpClient Http
+
+<div class="relative border rounded p-3 text-center cursor-pointer" style="background: #fafafa;">
+    <InputFile OnChange="OnFileSelected" accept="image/*" class="absolute inset-0 h-full w-full opacity-0 cursor-pointer" />
+    @if (!string.IsNullOrWhiteSpace(Value))
+    {
+        <img src="@Value" alt="preview" style="max-height: 160px; object-fit: contain; border: 1px solid #eee; border-radius: 4px;" />
+    }
+    else
+    {
+        <div class="text-muted">Drop an image here</div>
+    }
+
+    <div class="mt-2 small">
+        Drag & drop or click to choose an image
+    </div>
+
+    @if (!string.IsNullOrEmpty(_error))
+    {
+        <div class="text-danger small mt-2">@_error</div>
+    }
+</div>
+
+@code {
+    [Parameter] public string? Value { get; set; }
+    [Parameter] public EventCallback<string?> ValueChanged { get; set; }
+
+    private string? _error;
+
+    private async Task OnFileSelected(InputFileChangeEventArgs args)
+    {
+        if (args.FileCount == 0)
+            return;
+
+        var file = args.File;
+        await UploadAsync(file);
+    }
+
+    private async Task UploadAsync(IBrowserFile? file)
+    {
+        if (file is null)
+            return;
+
+        try
+        {
+            _error = null;
+            using var content = new MultipartFormDataContent();
+            var stream = file.OpenReadStream(maxAllowedSize: 10 * 1024 * 1024);
+            var fileContent = new StreamContent(stream);
+            if (!string.IsNullOrWhiteSpace(file.ContentType))
+            {
+                fileContent.Headers.ContentType = new MediaTypeHeaderValue(file.ContentType);
+            }
+            content.Add(fileContent, "file", file.Name);
+
+            var response = await Http.PostAsync("/api/admin/media/upload", content);
+            fileContent.Dispose();
+            stream.Dispose();
+
+            if (!response.IsSuccessStatusCode)
+            {
+                _error = $"Upload failed: {(int)response.StatusCode} {response.ReasonPhrase}";
+                StateHasChanged();
+                return;
+            }
+
+            var payload = await response.Content.ReadFromJsonAsync<JsonElement>();
+            if (payload.ValueKind == JsonValueKind.Object && payload.TryGetProperty("url", out var urlProp))
+            {
+                var url = urlProp.GetString();
+                Value = url;
+                if (ValueChanged.HasDelegate)
+                {
+                    await ValueChanged.InvokeAsync(Value);
+                }
+                StateHasChanged();
+            }
+            else
+            {
+                _error = "Upload response missing URL.";
+                StateHasChanged();
+            }
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+            StateHasChanged();
+        }
+    }
+}

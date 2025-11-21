@@ -1,0 +1,3334 @@
+@page "/builder/{BuildId:long?}"
+@rendermode InteractiveServer
+@using System.Net
+@using System.Net.Http.Json
+@using System.Text.Json
+@using System.Text.Json.Serialization
+@using System.Linq
+@using RotorBase.Components.Shared
+@using RotorBase
+@using RotorBase.Services
+@using Microsoft.JSInterop
+@inject HttpClient Http
+@inject UserSession Session
+@inject NavigationManager Nav
+@inject IJSRuntime JS
+@implements IDisposable
+@implements IAsyncDisposable
+
+<PageTitle>RotorBase Builder</PageTitle>
+
+<HeadContent>
+    <link rel="stylesheet" href="/css/engine3d.css" />
+</HeadContent>
+
+<!-- HEADER -->
+<img src="/favicon.png" alt="RotorBase" class="h-12" />
+
+<SaveBar Draft="IsDraft"
+         IsSignedIn="Session.IsSignedIn"
+         BuildName="@BuildName"
+         OnNameChange="OnBuildNameChanged"
+         OnSave="SaveCurrentAsync"
+         OnSaveAs="SaveAsAsync" />
+
+@if (Session.IsSignedIn)
+{
+  <AwardPings />
+}
+
+<!-- ALERTS -->
+@if (!string.IsNullOrEmpty(ErrorMessage))
+{
+  <div class="my-3 rounded-md border border-red-200 bg-red-50 px-4 py-2 text-sm text-red-700" role="alert">
+    @ErrorMessage
+  </div>
+}
+@if (ShowAuthPrompt && !Session.IsSignedIn)
+{
+  <div class="my-3 rounded-md border border-sky-200 bg-sky-50 px-4 py-2 text-sm text-sky-800" role="alert">
+    Sign in to save or edit builds.
+  </div>
+}
+
+<!-- CREATE MODE -->
+@if (BuildId is null)
+{
+  <div class="mb-4 rounded-xl border border-gray-200 bg-white shadow-sm">
+    <div class="p-4">
+      <h2 class="mb-2 text-lg font-semibold">Create a Build</h2>
+      <p class="mb-4 text-sm text-gray-500">
+        Pick an engine family and category tree, then click <strong>Create Build</strong> to start configuring parts.
+      </p>
+
+      <div class="mb-3 grid gap-3 md:grid-cols-2">
+        <div>
+          <label class="mb-1 block text-sm font-medium text-gray-700">Engine Family</label>
+          <select class="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                  @onchange="OnEngineChanged">
+            @foreach (var ef in EngineFamilies)
+            {
+              <option value="@ef.engine_family_id" selected="@(ef.engine_family_id == EngineFamilyId)">
+                @ef.code (@ef.rotor_count rotors)
+              </option>
+            }
+          </select>
+        </div>
+
+        <div>
+          <label class="mb-1 block text-sm font-medium text-gray-700">Category Tree</label>
+          <input type="text"
+                 class="w-full rounded-md border border-gray-300 bg-gray-50 px-3 py-2 text-sm text-gray-700 disabled:opacity-70"
+                 value="@(TreeName ?? string.Empty)"
+                 placeholder="No default tree configured"
+                 disabled />
+          @if (TreeLoading)
+          {
+            <div class="mt-1 text-xs text-gray-500">Resolving tree…</div>
+          }
+          else if (!string.IsNullOrEmpty(TreeError))
+          {
+            <div class="mt-1 text-xs text-red-600">@TreeError</div>
+          }
+          else if (TreeId is null)
+          {
+            <div class="mt-1 text-xs text-gray-500">Configure a default tree for this engine to create a build.</div>
+          }
+        </div>
+      </div>
+
+      <div class="flex items-center gap-3">
+        <button class="inline-flex items-center rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
+                @onclick="NewBuild"
+                disabled="@(CreatingBuild || !Session.IsSignedIn || !CanCreateAnotherBuild || TreeId is null)">
+          @(CreatingBuild ? "Creating..." : "Create Build")
+        </button>
+
+        @if (Session.IsSignedIn && !CanCreateAnotherBuild)
+        {
+          <span class="text-sm text-amber-600">Plan limit reached. Upgrade or archive a build to add another.</span>
+        }
+        @if (!Session.IsSignedIn)
+        {
+          <span class="text-sm text-gray-500">Sign in to save builds.</span>
+          <button class="text-sm font-medium text-indigo-700 hover:underline" @onclick="OpenAuth">Sign in</button>
+        }
+      </div>
+    </div>
+  </div>
+}
+else
+{
+  <!-- TOP ACTIONS -->
+  <div class="mb-3 flex flex-wrap items-center gap-2">
+    <a class="inline-flex items-center rounded-md border border-indigo-200 bg-white px-3 py-1.5 text-sm font-medium text-indigo-700 hover:bg-indigo-50"
+       href="/builds">
+      Build Dashboard
+    </a>
+    @if (ShouldShowClaimButton)
+    {
+      <button class="inline-flex items-center rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
+              @onclick="ClaimBuild"
+              disabled="@(Claiming || !Session.IsSignedIn)">
+        @(Claiming ? "Saving..." : "Save to My Builds")
+      </button>
+    }
+  </div>
+
+  <!-- KPI SUMMARY -->
+  @if (Summary is not null)
+  {
+    <div class="mb-4 grid gap-3 md:grid-cols-4">
+      <div class="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
+        <div class="text-xs uppercase tracking-wide text-gray-500">Completion</div>
+        <div class="mt-1 text-3xl font-semibold">@FormatPercent(Summary?.completion_pct)</div>
+        <div class="mt-1 text-xs text-gray-500">@Summary!.categories_complete of @Summary!.categories_total categories</div>
+      </div>
+      <div class="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
+        <div class="text-xs uppercase tracking-wide text-gray-500">Open Categories</div>
+        <div class="mt-1 text-3xl font-semibold">@Summary!.categories_incomplete</div>
+        <div class="mt-1 text-xs text-gray-500">Needs formula: @FormulaCategories.Count</div>
+      </div>
+      <div class="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
+        <div class="text-xs uppercase tracking-wide text-gray-500">Pieces Missing</div>
+        <div class="mt-1 text-3xl font-semibold">@FormatDecimal(Summary?.total_pieces_missing)</div>
+        <div class="mt-1 text-xs text-gray-500">Across incomplete categories</div>
+      </div>
+      <div class="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
+        <div class="text-xs uppercase tracking-wide text-gray-500">Est. Cost (Lowest)</div>
+        <div class="mt-1 text-3xl font-semibold">@FormatCurrency(EstimatedCost ?? Summary?.estimated_cost_lowest)</div>
+        <div class="mt-1 text-xs text-gray-500">Best current offerings</div>
+      </div>
+    </div>
+  }
+
+  @if (IsViewer)
+  {
+    <div class="mb-3 rounded-md border border-sky-200 bg-sky-50 px-4 py-2 text-sm text-sky-800" role="alert">
+      You have view-only access to this shared build.
+    </div>
+  }
+
+  <!-- THREE-COLUMN LAYOUT -->
+  <div class="grid gap-4 md:grid-cols-12">
+    <!-- LEFT -->
+    <div class="md:col-span-3">
+      <h5 class="mb-1 text-sm font-semibold">Engine Family</h5>
+      <select class="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-200 disabled:opacity-50"
+              @onchange="OnEngineChanged" disabled="@IsViewer">
+        @foreach (var ef in EngineFamilies)
+        {
+          <option value="@ef.engine_family_id" selected="@(ef.engine_family_id == EngineFamilyId)">
+            @ef.code (@ef.rotor_count rotors)
+          </option>
+        }
+      </select>
+
+      <h5 class="mt-4 mb-1 text-sm font-semibold">Category Tree</h5>
+      <div class="text-sm text-gray-700">@(!string.IsNullOrWhiteSpace(TreeName) ? TreeName : "No default tree configured")</div>
+      @if (TreeLoading)
+      {
+        <div class="text-xs text-gray-500">Resolving tree…</div>
+      }
+      else if (!string.IsNullOrEmpty(TreeError))
+      {
+        <div class="text-xs text-red-600">@TreeError</div>
+      }
+      else if (TreeId.HasValue)
+      {
+        <div class="text-xs text-gray-500">Auto-selected from the engine family.</div>
+      }
+
+      <h5 class="mt-4 mb-2 text-sm font-semibold">Categories</h5>
+      @if (Categories.Count > 0)
+      {
+        <div class="space-y-2">
+          @foreach (var category in Categories)
+          {
+            if (!IsCategoryVisible(category))
+            {
+                continue;
+            }
+
+            var categorySlots = CategorySlots.Where(c => c.CategoryId == category.CategoryId).ToList();
+            var isFocused = FocusedCategoryId == category.CategoryId;
+            var selectableRowClass = isFocused
+              ? "rounded-lg border border-indigo-300 bg-indigo-50 p-3 shadow-sm ring-1 ring-indigo-200"
+              : "rounded-lg border border-gray-200 bg-white p-3 shadow-sm";
+            var groupRowClass = "rounded-lg border border-slate-100 bg-slate-50 p-3";
+            var rowClass = category.IsSelectable ? selectableRowClass : groupRowClass;
+            var rowStyle = GetCategoryTreeOffset(category.Depth);
+            var hasOptions = CategoryOptions.TryGetValue(category.CategoryId, out var opts);
+            var loading = CategoryOptionsLoading.Contains(category.CategoryId);
+            var summaryRow = Completion.FirstOrDefault(x => x.category_id == category.CategoryId);
+            var status = summaryRow?.status ?? (category.IsSelectable ? "unknown" : null);
+            var statusLabel = string.IsNullOrWhiteSpace(status) ? null : status.Replace('_', ' ');
+            var hasChildren = HasChildCategories(category.CategoryId);
+            var isCollapsed = CollapsedCategories.Contains(category.CategoryId);
+
+            <div class="@rowClass" style="@rowStyle">
+              <div class="mb-1 flex items-center justify-between gap-2">
+                <div class="flex items-center gap-2">
+                  @if (hasChildren)
+                  {
+                    <button type="button"
+                            class="inline-flex h-5 w-5 items-center justify-center rounded border border-gray-300 bg-white text-[10px] font-semibold text-gray-600 hover:bg-gray-100"
+                            @onclick="() => ToggleCategoryCollapse(category.CategoryId)">
+                      @(isCollapsed ? "▶" : "▼")
+                    </button>
+                  }
+                  else
+                  {
+                    <span class="inline-flex h-5 w-5"></span>
+                  }
+
+                  <label class="block text-xs font-semibold text-gray-700">
+                    @category.Name
+                    @if (!string.IsNullOrWhiteSpace(category.Slug))
+                    {
+                      <span class="ml-1 text-[11px] font-normal text-gray-400">@category.Slug</span>
+                    }
+                  </label>
+                </div>
+                @if (!string.IsNullOrWhiteSpace(status) && statusLabel is not null)
+                {
+                  <span class="@FormatStatusBadgeTw(status)">@statusLabel</span>
+                }
+              </div>
+
+              @if (categorySlots.Count > 0 && category.IsSelectable)
+              {
+                foreach (var slot in categorySlots)
+                {
+                  var selectedId = GetSelectedPartId(category.CategoryId, slot.SlotId);
+                  var selectedValue = selectedId?.ToString() ?? string.Empty;
+                  var selectId = $"cat-{category.CategoryId}-{slot.SlotId}";
+
+                  <div class="mb-2 last:mb-0">
+                    <select id="@selectId"
+                            class="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-200 disabled:opacity-60"
+                            value="@selectedValue"
+                            disabled="@IsViewer"
+                            @onfocus="() => EnsureOptions(category.CategoryId)"
+                            @onchange="e => OnPickPart(slot, e)">
+                      <option value="">— select —</option>
+                      @if (loading && !hasOptions)
+                      {
+                        <option disabled value="">Loading…</option>
+                      }
+                      else if (hasOptions && opts is not null)
+                      {
+                        foreach (var p in opts)
+                        {
+                          var label = string.IsNullOrWhiteSpace(p.GltfUri) ? $"{p.Name} (no GLB)" : p.Name;
+                          <option value="@p.Id">@label</option>
+                        }
+                      }
+                    </select>
+                    <div class="mt-1 text-xs text-gray-400">@slot.SlotKey</div>
+                  </div>
+                }
+              }
+              else if (category.IsSelectable)
+              {
+                <div class="text-xs text-gray-500">
+                  No sockets mapped to this category.
+                </div>
+              }
+              else
+              {
+                <div class="text-xs text-gray-400">
+                  Group node
+                </div>
+              }
+            </div>
+          }
+        </div>
+      }
+      else if (CategorySlots.Count == 0)
+      {
+        <div class="rounded-md border border-gray-200 bg-white p-3 text-sm text-gray-500">
+          No compatible categories found for this build.
+        </div>
+      }
+      else
+      {
+        <div class="space-y-3">
+          @foreach (var slot in CategorySlots)
+          {
+            var isFocused = FocusedCategoryId == slot.CategoryId;
+            var rowClass = isFocused
+              ? "rounded-md border border-indigo-400 bg-indigo-50 p-3 shadow-sm"
+              : "rounded-md border border-gray-200 bg-white p-3 shadow-sm";
+            var selectedId = GetSelectedPartId(slot.CategoryId, slot.SlotId);
+            var selectedValue = selectedId?.ToString() ?? string.Empty;
+            var hasOptions = CategoryOptions.TryGetValue(slot.CategoryId, out var opts);
+            var loading = CategoryOptionsLoading.Contains(slot.CategoryId);
+            var subsystemLabel = string.IsNullOrWhiteSpace(slot.SubsystemName) ? "Subsystem" : slot.SubsystemName;
+            var summaryRow = Completion.FirstOrDefault(x => x.category_id == slot.CategoryId);
+            var status = summaryRow?.status ?? "unknown";
+            var statusLabel = string.IsNullOrWhiteSpace(status) ? "unknown" : status.Replace('_', ' ');
+            var selectId = $"cat-{slot.CategoryId}-{slot.SlotId}";
+
+            <div class="@rowClass">
+              <div class="mb-1 flex items-center justify-between gap-2">
+                <label class="block text-xs font-semibold text-gray-600" for="@selectId">
+                  @subsystemLabel
+                  <span class="mx-1 text-gray-400">·</span>
+                  @slot.CategoryName
+                </label>
+                <span class="@FormatStatusBadgeTw(status)">@statusLabel</span>
+              </div>
+              <select id="@selectId"
+                      class="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-200 disabled:opacity-60"
+                      value="@selectedValue"
+                      disabled="@IsViewer"
+                      @onfocus="() => EnsureOptions(slot.CategoryId)"
+                      @onchange="e => OnPickPart(slot, e)">
+                <option value="">— select —</option>
+                @if (loading && !hasOptions)
+                {
+                  <option disabled value="">Loading…</option>
+                }
+                else if (hasOptions && opts is not null)
+                {
+                  foreach (var p in opts)
+                  {
+                    var label = string.IsNullOrWhiteSpace(p.GltfUri) ? $"{p.Name} (no GLB)" : p.Name;
+                    <option value="@p.Id">@label</option>
+                  }
+                }
+              </select>
+              <div class="mt-1 text-xs text-gray-400">@slot.SlotKey</div>
+            </div>
+          }
+        </div>
+      }
+
+      @if (SlotBadges.Count > 0)
+      {
+        <div class="mt-4 overflow-hidden rounded-md border border-gray-200 bg-white">
+          <div class="border-b border-gray-100 bg-gray-50 px-3 py-2 text-sm font-semibold text-gray-700">
+            Socket Checklist
+          </div>
+          <ul class="divide-y divide-gray-100">
+            @foreach (var slot in SlotBadges)
+            {
+              <li class="flex items-center justify-between px-3 py-2">
+                <div class="text-sm">
+                  <span class="mr-2">@GetSlotBadge(slot)</span>
+                  <span class="font-medium text-gray-800">@GetSlotDisplayName(slot)</span>
+                  @if (!string.IsNullOrWhiteSpace(slot.PartName))
+                  {
+                    <span class="ml-1 text-xs text-gray-500">(@slot.PartName)</span>
+                  }
+                </div>
+                <div class="text-xs text-gray-500">@slot.SelectedCount/@slot.Capacity</div>
+              </li>
+            }
+          </ul>
+        </div>
+      }
+    </div>
+
+    <!-- CENTER -->
+    <div class="md:col-span-6">
+      @if (BuildId.HasValue)
+      {
+        <div class="mb-4 overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
+          <div class="flex items-center justify-between border-b border-gray-100 bg-gray-50 px-4 py-2">
+            <h6 class="m-0 text-sm font-semibold">Socket Progress</h6>
+            <span class="text-sm font-medium text-gray-600">@BadgeCompletionPct.ToString("0.0")%</span>
+          </div>
+          <div class="p-4">
+            <div class="h-2 w-full overflow-hidden rounded-full bg-gray-200">
+              <div class="h-full rounded-full bg-emerald-500 transition-all duration-300"
+                   style="width:@($"{Math.Clamp(BadgeCompletionPct, 0d, 100d):0.0}%")"></div>
+            </div>
+            <div class="mt-2 text-xs text-gray-500">
+              Badges update instantly as you select or clear sockets.
+            </div>
+          </div>
+        </div>
+      }
+
+      <div class="mb-4 overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
+        <div class="flex items-center justify-between border-b border-gray-100 bg-gray-50 px-4 py-2">
+          <h6 class="m-0 text-sm font-semibold">Engine Preview</h6>
+          <span class="text-xs text-gray-500">Click a socket to select</span>
+        </div>
+        <div class="p-3">
+          <div id="engine3d" class="engine3d-canvas"></div>
+        </div>
+      </div>
+      <h5 class="mb-2 text-sm font-semibold">Selected Parts</h5>
+      <div class="overflow-hidden rounded-md border border-gray-200 bg-white">
+        <table class="min-w-full text-left text-sm">
+          <thead class="bg-gray-50 text-xs uppercase text-gray-500">
+            <tr>
+              <th class="px-3 py-2">Category</th>
+              <th class="px-3 py-2">Part</th>
+              <th class="px-3 py-2">Qty</th>
+              <th class="px-3 py-2"></th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-gray-100">
+            @foreach (var s in Selections)
+            {
+              <tr>
+                <td class="px-3 py-2">@s.category_name</td>
+                <td class="px-3 py-2">@s.part_name (@s.sku)</td>
+                @{
+                    var adjustKey = (s.category_id, s.part_id);
+                    var adjusting = AdjustingSelections.Contains(adjustKey);
+                }
+                <td class="px-3 py-2">
+                    <div class="flex items-center gap-2">
+                      @{
+                          var canDecrement = s.qty > 0;
+                      }
+                      <button type="button"
+                              title="Remove one"
+                              class="inline-flex items-center rounded-md border border-gray-300 px-2 py-1 text-xs font-medium text-gray-700 hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-50"
+                              disabled="@IsViewer || adjusting || !canDecrement"
+                              @onclick="() => DecrementSelectionQty(s, adjusting)">
+                        <span>-1</span>
+                      </button>
+                      <span>@s.qty</span>
+                      <button type="button"
+                              title="Add one more"
+                              class="inline-flex items-center rounded-md border border-indigo-300 px-2 py-1 text-xs font-medium text-indigo-700 hover:bg-indigo-50 disabled:cursor-not-allowed disabled:opacity-50"
+                              disabled="@IsViewer"
+                              @onclick="() => IncrementSelectionQty(s, adjusting)">
+                        @if (adjusting)
+                        {
+                          <span class="animate-pulse">…</span>
+                        }
+                        else
+                        {
+                          <span>+1</span>
+                        }
+                      </button>
+                    </div>
+                  </td>
+                <td class="px-3 py-2">
+                  <button title="Remove"
+                          class="inline-flex items-center rounded-md border border-red-300 px-2 py-1 text-xs font-medium text-red-700 hover:bg-red-50 disabled:opacity-50"
+                          @onclick="() => RemoveSelection(s)" disabled="@IsViewer">×</button>
+                  <button title="Offers"
+                          class="ml-2 inline-flex items-center rounded-md border border-indigo-300 px-2 py-1 text-xs font-medium text-indigo-700 hover:bg-indigo-50"
+                          @onclick="() => LoadOfferings(s.part_id)">Offers</button>
+                </td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      </div>
+
+      <h5 class="mt-4 mb-2 text-sm font-semibold">Completion</h5>
+      <div class="overflow-hidden rounded-md border border-gray-200 bg-white">
+        <table class="min-w-full text-left text-sm">
+          <thead class="bg-gray-50 text-xs uppercase text-gray-500">
+            <tr>
+              <th class="px-3 py-2">Category</th>
+              <th class="px-3 py-2">Required</th>
+              <th class="px-3 py-2">Supplied</th>
+              <th class="px-3 py-2">Status</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-gray-100">
+            @foreach (var row in Completion)
+            {
+              <tr>
+                <td class="px-3 py-2">
+                  <div class="font-medium">@row.category_name</div>
+                  <div class="text-xs text-gray-500">Mode: @FormatMode(row.req_mode)</div>
+                </td>
+                <td class="px-3 py-2">@FormatDecimal(row.required_qty)</td>
+                <td class="px-3 py-2">@FormatDecimal(row.pieces_supplied)</td>
+                <td class="px-3 py-2">
+                  <span class="@FormatStatusBadgeTw(row.status)">@row.status</span>
+                </td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      </div>
+
+      @if (MissingCategories.Count > 0 || FormulaCategories.Count > 0)
+      {
+        <div class="mt-3 overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
+          <div class="border-b border-gray-100 bg-gray-50 px-4 py-2">
+            <h6 class="m-0 text-sm font-semibold">Follow-up Items</h6>
+          </div>
+          <div class="p-4">
+            @if (MissingCategories.Count > 0)
+            {
+              <div class="mb-3">
+                <div class="mb-1 text-sm font-semibold">Incomplete Categories</div>
+                <ul class="list-disc pl-5 text-sm">
+                  @foreach (var item in MissingCategories)
+                  {
+                    <li class="mb-1">
+                      <span class="font-medium">@item.category_name</span>
+                      <span class="text-gray-500"> (@FormatDecimal(item.pieces_missing) missing)</span>
+                    </li>
+                  }
+                </ul>
+              </div>
+            }
+            @if (FormulaCategories.Count > 0)
+            {
+              <div>
+                <div class="mb-1 text-sm font-semibold">Needs Formula Evaluation</div>
+                <ul class="list-disc pl-5 text-sm">
+                  @foreach (var item in FormulaCategories)
+                  {
+                    <li class="mb-1">
+                      <span class="font-medium">@item.category_name</span>
+                      <span class="text-gray-500"> (@item.formula)</span>
+                    </li>
+                  }
+                </ul>
+              </div>
+            }
+          </div>
+        </div>
+      }
+    </div>
+
+    <!-- RIGHT -->
+    <div class="md:col-span-3">
+      @if (SubsystemBadges.Count > 0)
+      {
+        <div class="mb-4 overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
+          <div class="border-b border-gray-100 bg-gray-50 px-4 py-2 text-sm font-semibold text-gray-700">
+            Subsystems
+          </div>
+          <ul class="divide-y divide-gray-100">
+            @foreach (var subsystem in SubsystemBadges)
+            {
+              <li class="flex items-center justify-between px-4 py-2 text-sm">
+                <div class="font-medium text-gray-800">
+                  <span class="mr-2">@GetSubsystemBadge(subsystem)</span>
+                  @GetSubsystemDisplayName(subsystem)
+                </div>
+                <div class="text-xs text-gray-500">@subsystem.OkSlots/@subsystem.TotalSlots</div>
+              </li>
+            }
+          </ul>
+        </div>
+      }
+
+      <div class="mb-4 overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
+        <button type="button"
+                class="flex w-full items-center justify-between px-4 py-2 text-left text-sm font-semibold text-gray-700 hover:bg-gray-50"
+                @onclick="ToggleIssues">
+          <span>⚠ Issues</span>
+          <span class="inline-flex min-w-[1.75rem] items-center justify-center rounded-full bg-gray-200 px-2 text-xs font-semibold text-gray-700">@Issues.Count</span>
+        </button>
+
+        @if (ShowIssues)
+        {
+          if (Issues.Count == 0)
+          {
+            <div class="px-4 py-3 text-xs text-emerald-600">All sockets look good.</div>
+          }
+          else
+          {
+            <ul class="max-h-64 divide-y divide-gray-100 overflow-y-auto text-sm">
+              @foreach (var issue in Issues)
+              {
+                <li class="px-4 py-2 hover:bg-gray-50">
+                  <span class="font-medium text-red-600">@issue.Type</span>
+                  <span class="text-gray-700"> → @FormatSocketKey(issue.SocketKey)</span>
+                </li>
+              }
+            </ul>
+          }
+        }
+      </div>
+
+      <div class="mb-4 overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
+        <div class="flex items-center justify-between border-b border-gray-100 bg-gray-50 px-4 py-2">
+          <h6 class="m-0 text-sm font-semibold">Buy Plan</h6>
+          <select class="w-auto rounded-md border border-gray-300 bg-white px-2 py-1 text-xs focus:border-indigo-500 focus:outline-none"
+                  value="@BuyMode" @onchange="OnBuyModeChanged">
+            <option value="cheapest">Cheapest mix</option>
+            <option value="singleVendor">Single vendor</option>
+          </select>
+        </div>
+        <div class="p-4">
+          <button class="inline-flex items-center rounded-md bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
+                  @onclick="LoadBuyPlanAsync"
+                  disabled="@(BuyPlanLoading || BuildId is null)">
+            @(BuyPlanLoading ? "Loading…" : "Generate")
+          </button>
+
+          @if (!string.IsNullOrEmpty(BuyPlanError))
+          {
+            <div class="mt-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">@BuyPlanError</div>
+          }
+          else if (BuyPlanLoading)
+          {
+            <div class="mt-3 text-xs text-gray-500">Calculating plan…</div>
+          }
+          else if (BuyPlanItems.Any())
+          {
+            @if (!string.IsNullOrEmpty(BuyPlanVendor) && BuyMode == "singleVendor")
+            {
+              <div class="mt-2 text-xs text-gray-500">
+                Vendor: <span class="font-semibold text-gray-700">@BuyPlanVendor</span>
+              </div>
+            }
+            <div class="mt-2 overflow-hidden rounded-md border border-gray-200">
+              <table class="min-w-full text-left text-sm">
+                <thead class="bg-gray-50 text-xs uppercase text-gray-500">
+                  <tr>
+                    <th class="px-3 py-2">Part</th>
+                    <th class="px-3 py-2 text-right">Qty</th>
+                    <th class="px-3 py-2 text-right">Unit</th>
+                    <th class="px-3 py-2">Vendor</th>
+                    <th class="px-3 py-2"></th>
+                  </tr>
+                </thead>
+                <tbody class="divide-y divide-gray-100">
+                  @foreach (var item in BuyPlanItems)
+                  {
+                    <tr>
+                      <td class="px-3 py-2">@item.part_id</td>
+                      <td class="px-3 py-2 text-right">@item.qty</td>
+                      <td class="px-3 py-2 text-right">@item.unit_price.ToString("C")</td>
+                      <td class="px-3 py-2">@item.vendor</td>
+                      <td class="px-3 py-2 text-right">
+                        <button class="text-xs font-medium text-indigo-700 hover:underline"
+                                @onclick="() => BuyPlanClickAsync(item)">Buy</button>
+                      </td>
+                    </tr>
+                  }
+                </tbody>
+              </table>
+            </div>
+            <div class="mt-2 text-right text-sm font-semibold">Total: @BuyPlanTotal.ToString("C")</div>
+          }
+          else
+          {
+            <div class="mt-3 text-xs text-gray-500">Generate a plan to see vendor pricing.</div>
+          }
+        </div>
+      </div>
+      <h5 class="mt-4 mb-1 text-sm font-semibold">Offers</h5>
+      @if (Offerings.Count == 0)
+      {
+        <p class="text-sm text-gray-500">Select a part and click Offers.</p>
+      }
+      else
+      {
+        <ul class="divide-y divide-gray-100 rounded-md border border-gray-200 bg-white">
+          @foreach (var o in Offerings)
+          {
+            <li class="flex items-center justify-between px-3 py-2">
+              <span class="text-sm">@o.vendor_name</span>
+              <span class="flex items-center gap-2">
+                <span class="inline-flex items-center rounded-md bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-700">
+                  @FormatCurrency(o.price)
+                </span>
+                <button class="inline-flex items-center rounded-md bg-indigo-600 px-2 py-1 text-xs font-medium text-white hover:bg-indigo-700"
+                        @onclick="() => BuyOffering(o)">Buy</button>
+              </span>
+            </li>
+          }
+        </ul>
+      }
+
+      <div class="mt-4">
+        <h6 class="mb-1 text-sm font-semibold">Estimated Cost</h6>
+        <div class="text-base font-medium">@FormatCurrency(EstimatedCost ?? Summary?.estimated_cost_lowest)</div>
+      </div>
+
+      <div class="mt-4 overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
+        <div class="border-b border-gray-100 bg-gray-50 px-4 py-2">
+          <h6 class="m-0 text-sm font-semibold">Brand Spend Mix</h6>
+        </div>
+        <div class="p-0">
+          @if (BrandMix.Count == 0)
+          {
+            <div class="p-3 text-sm text-gray-500">No pricing data available.</div>
+          }
+          else
+          {
+            <table class="min-w-full text-left text-sm">
+              <thead class="bg-gray-50 text-xs uppercase text-gray-500">
+                <tr>
+                  <th class="px-3 py-2">Brand</th>
+                  <th class="px-3 py-2 text-right">Qty</th>
+                  <th class="px-3 py-2 text-right">Est. Spend</th>
+                </tr>
+              </thead>
+              <tbody class="divide-y divide-gray-100">
+                @foreach (var brand in BrandMix)
+                {
+                  <tr>
+                    <td class="px-3 py-2">@brand.brand_name</td>
+                    <td class="px-3 py-2 text-right">@FormatDecimal(brand.total_qty)</td>
+                    <td class="px-3 py-2 text-right">@FormatCurrency(brand.est_spend)</td>
+                  </tr>
+                }
+              </tbody>
+            </table>
+          }
+        </div>
+      </div>
+
+      <div class="mt-4">
+        <h6 class="mb-1 text-sm font-semibold">Plans</h6>
+        <ul class="divide-y divide-gray-100 rounded-md border border-gray-200 bg-white">
+          @foreach (var pl in Plans)
+          {
+            <li class="flex items-center justify-between px-3 py-2">
+              <span class="text-sm">@pl.name</span>
+              <span class="inline-flex items-center rounded-md bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-700">
+                @pl.currency @pl.monthly_price
+              </span>
+            </li>
+          }
+        </ul>
+      </div>
+    </div>
+  </div>
+}
+
+@code {
+    [Parameter] public long? BuildId { get; set; }
+
+    record EngineFamilyDto(
+        [property: JsonPropertyName("engine_family_id")] long engine_family_id,
+        [property: JsonPropertyName("code")] string code,
+        [property: JsonPropertyName("rotor_count")] int? rotor_count,
+        [property: JsonPropertyName("years_start")] int? years_start,
+        [property: JsonPropertyName("years_end")] int? years_end,
+        [property: JsonPropertyName("slot_count")] int slot_count,
+        [property: JsonPropertyName("scene_gltf_uri")] string? scene_gltf_uri);
+    record TreeDto(long tree_id, string name);
+    record DefaultTreeDto(
+        [property: JsonPropertyName("tree_id")] long tree_id,
+        [property: JsonPropertyName("tree_name")] string tree_name,
+        [property: JsonPropertyName("engine_family_id")] long engine_family_id,
+        [property: JsonPropertyName("engine_code")] string? engine_code);
+record CategoryNode(
+    [property: JsonPropertyName("category_id")] long CategoryId,
+    [property: JsonPropertyName("name")] string Name,
+    [property: JsonPropertyName("slug")] string Slug,
+    [property: JsonPropertyName("is_selectable")] bool IsSelectable,
+    [property: JsonPropertyName("depth")] int Depth,
+    [property: JsonPropertyName("parent_id")] long? ParentId);
+record CategorySlotVm(
+    [property: JsonPropertyName("CategoryId")] long CategoryId,
+    [property: JsonPropertyName("CategoryKey")] string? CategoryKey,
+    [property: JsonPropertyName("CategoryName")] string CategoryName,
+    [property: JsonPropertyName("SlotId")] long SlotId,
+    [property: JsonPropertyName("SlotKey")] string SlotKey,
+    [property: JsonPropertyName("GltfNodePath")] string? GltfNodePath,
+    [property: JsonPropertyName("SubsystemName")] string SubsystemName);
+record PartOptionVm(
+    [property: JsonPropertyName("Id")] long Id,
+    [property: JsonPropertyName("Name")] string Name,
+    [property: JsonPropertyName("Sku")] string? Sku,
+    [property: JsonPropertyName("GltfUri")] string? GltfUri,
+    [property: JsonPropertyName("GltfAttachNode")] string GltfAttachNode);
+    record PartDto(long part_id, string? sku, string name, bool is_kit, decimal pieces_per_unit, string status, string? image_url, string? brand_name, decimal? best_price);
+    record SelectionDto(long category_id, string category_name, long part_id, string part_name, string? sku, decimal qty);
+    record OfferingDto(long offering_id, long vendor_id, string vendor_name, decimal? price, string currency, string availability, long part_id);
+    record BuyPlanItemDto(long part_id, decimal qty, decimal unit_price, string vendor, long vendor_id, long offering_id);
+    record PlanDto(long plan_id, string code, string name, decimal monthly_price, string currency);
+    record BuildResp(long build_id, long engine_family_id, long? tree_id, string name);
+    record BuildInfoDto(
+        [property: JsonPropertyName("build_id")] long build_id,
+        [property: JsonPropertyName("user_id")] long? user_id,
+        [property: JsonPropertyName("engine_family_id")] long engine_family_id,
+        [property: JsonPropertyName("tree_id")] long? tree_id,
+        [property: JsonPropertyName("name")] string name,
+        [property: JsonPropertyName("is_archived")] bool is_archived,
+        [property: JsonPropertyName("is_shared")] bool is_shared,
+        [property: JsonPropertyName("created_at")] DateTime created_at,
+        [property: JsonPropertyName("updated_at")] DateTime updated_at);
+    record BuildRoleDto(BuildInfoDto? build, string role);
+    record BuildSceneMeta(
+        [property: JsonPropertyName("engine_gltf_uri")] string? EngineGltfUri,
+        [property: JsonPropertyName("engine_family_id")] long EngineFamilyId);
+    record CostResp(decimal? selected_total, decimal? lowest_mix_total);
+    record SummaryDto(long build_id, int categories_total, int categories_complete, int categories_incomplete, decimal? completion_pct, decimal? total_pieces_missing, decimal? estimated_cost_lowest);
+    record BrandMixDto(long build_id, string brand_name, decimal? total_qty, decimal? est_spend);
+
+    class CompletionRow
+    {
+        public long build_id { get; set; }
+        public long category_id { get; set; }
+        public string? category_name { get; set; }
+        public string? req_mode { get; set; }
+        public string? requirement_type { get; set; }
+        public string? formula { get; set; }
+        public decimal? required_qty { get; set; }
+        public decimal? pieces_supplied { get; set; }
+        public decimal? pieces_missing { get; set; }
+        public string status { get; set; } = "unknown";
+    }
+
+    class DefaultTreeResult
+    {
+        public bool Success { get; init; }
+        public long? TreeId { get; init; }
+        public string? TreeName { get; init; }
+        public string? ErrorMessage { get; init; }
+    }
+
+    List<EngineFamilyDto> EngineFamilies = new();
+    long EngineFamilyId;
+    List<TreeDto> Trees = new();
+    long? TreeId;
+    string? TreeName;
+    bool TreeLoading;
+    string? TreeError;
+    List<CategoryNode> Categories = new();
+    Dictionary<long, CategoryNode> CategoryLookup = new();
+    Dictionary<long, List<CategoryNode>> CategoryChildren = new();
+    HashSet<long> CollapsedCategories = new();
+    HashSet<(long categoryId, long partId)> AdjustingSelections = new();
+    List<CategorySlotVm> CategorySlots = new();
+    Dictionary<long, List<PartOptionVm>> CategoryOptions = new();
+    HashSet<long> CategoryOptionsLoading = new();
+    long? FocusedCategoryId;
+    List<CompletionRow> Completion = new();
+    List<CompletionRow> MissingCategories = new();
+    List<CompletionRow> FormulaCategories = new();
+    List<SelectionDto> Selections = new();
+    List<(long offering_id, long vendor_id, string vendor_name, decimal? price, string currency, string availability, long part_id)> Offerings = new();
+    decimal? EstimatedCost;
+    List<PlanDto> Plans = new();
+    SummaryDto? Summary;
+    List<BrandMixDto> BrandMix = new();
+    string BuyMode = "cheapest";
+    List<BuyPlanItemDto> BuyPlanItems = new();
+    decimal BuyPlanTotal;
+    string? BuyPlanVendor;
+    bool BuyPlanLoading;
+    string? BuyPlanError;
+    string? ErrorMessage;
+    string? BuildRole;
+    bool ShowAuthPrompt;
+    bool Claiming;
+    bool CreatingBuild;
+    bool SocketRoutePending;
+    string? RouteToast;
+    long? BuildOwnerId;
+    string BuildName { get; set; } = "Untitled Build";
+    string TreeInputClass => string.IsNullOrEmpty(TreeError) ? "form-control" : "form-control is-invalid";
+    bool _sessionWasSignedIn;
+    bool _buildOpenedTracked;
+    IJSObjectReference? _engineModule;
+    bool _engineSceneReady;
+    bool _engineSceneHydrated;
+    long? _engineSceneBuildId;
+    long? _sceneMetaBuildId;
+    long? _sceneMetaEngineFamilyId;
+    string? _engineSceneUri;
+    string? _lastMountedGlbPath;
+    bool _viewerDebug;
+    bool _hasDebugQuery;
+    bool _disposed;
+    DotNetObjectReference<Builder>? _dotNetRef;
+    bool _dotnetRefRegistered;
+    double BadgeCompletionPct;
+    List<SlotVM> SlotBadges { get; } = new();
+    List<SubsystemVM> SubsystemBadges { get; } = new();
+    BadgeHints LatestBadgeHints { get; set; } = new();
+    bool ShowIssues;
+    List<IssueVM> Issues { get; } = new();
+
+    bool IsViewer => string.Equals(BuildRole, "viewer", System.StringComparison.OrdinalIgnoreCase);
+    bool ShouldShowClaimButton => BuildId.HasValue && BuildOwnerId is null;
+    bool IsDraft => !BuildId.HasValue;
+
+    bool IsAtActiveLimit => Session.Limits?.Usage?.RemainingActive is int rActive && rActive <= 0;
+    bool IsAtTotalLimit => Session.Limits?.Usage?.RemainingTotal is int rTotal && rTotal <= 0;
+    bool CanCreateAnotherBuild => !IsAtActiveLimit && !IsAtTotalLimit;
+
+    protected override async Task OnInitializedAsync()
+    {
+        ErrorMessage = null;
+
+        try
+        {
+            var uri = new Uri(Nav.Uri);
+            var queryParams = Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(uri.Query);
+            if (queryParams.TryGetValue("debug", out var debugValues))
+            {
+                _viewerDebug = string.Equals(debugValues.ToString(), "1", StringComparison.OrdinalIgnoreCase);
+                _hasDebugQuery = true;
+            }
+            else
+            {
+                _viewerDebug = false;
+                _hasDebugQuery = false;
+            }
+        }
+        catch
+        {
+            _viewerDebug = false;
+            _hasDebugQuery = false;
+        }
+
+        Session.Changed += OnSessionChanged;
+        await Session.HydrateAsync();
+        if (Session.IsSignedIn)
+        {
+            await Session.RefreshLimitsAsync();
+        }
+        _sessionWasSignedIn = Session.IsSignedIn;
+        EngineFamilies = (await Http.GetFromJsonAsync<List<EngineFamilyDto>>("/api/engine-families")) ?? new();
+        Trees = (await Http.GetFromJsonAsync<List<TreeDto>>("/api/category-trees")) ?? new();
+
+        long ResolveDefaultEngineFamilyId()
+        {
+            long? best = EngineFamilies
+                .Where(ef => ef.slot_count > 0 && !string.IsNullOrWhiteSpace(ef.scene_gltf_uri))
+                .Select(ef => (long?)ef.engine_family_id)
+                .FirstOrDefault();
+
+            if (!best.HasValue)
+            {
+                best = EngineFamilies
+                    .Where(ef => ef.slot_count > 0)
+                    .Select(ef => (long?)ef.engine_family_id)
+                    .FirstOrDefault();
+            }
+
+            return best ?? EngineFamilies.FirstOrDefault()?.engine_family_id ?? 0;
+        }
+
+        EngineFamilyId = ResolveDefaultEngineFamilyId();
+        if (EngineFamilyId == 0)
+        {
+            ErrorMessage = "No engine families found. Add rows to EngineFamily.";
+            return;
+        }
+
+        if (BuildId is null)
+        {
+            await ResolveDefaultTreeAsync(EngineFamilyId);
+            if (!Session.IsSignedIn)
+            {
+                ShowAuthPrompt = true;
+            }
+        }
+        else if (Session.IsSignedIn)
+        {
+            await RefreshAll();
+        }
+        else
+        {
+            RequireSignIn("Sign in to access this build.");
+        }
+
+        Plans = (await Http.GetFromJsonAsync<List<PlanDto>>("/api/plans")) ?? new();
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        await base.OnAfterRenderAsync(firstRender);
+
+        if (_disposed)
+        {
+            return;
+        }
+
+        if (BuildId.HasValue)
+        {
+            await EnsureEngineSceneAsync();
+        }
+        else
+        {
+            await DisposeEngineSceneAsync();
+        }
+
+        if (_engineModule is not null && _dotNetRef is null)
+        {
+            _dotNetRef = DotNetObjectReference.Create(this);
+        }
+
+        if (_engineModule is not null && _dotNetRef is not null && !_dotnetRefRegistered)
+        {
+            try
+            {
+                await _engineModule.InvokeVoidAsync("setDotNetRef", _dotNetRef);
+                _dotnetRefRegistered = true;
+                if (BuildId.HasValue)
+                {
+                    await _engineModule.InvokeVoidAsync("refreshBadges");
+                }
+            }
+            catch (JSDisconnectedException)
+            {
+                // Circuit disposed before we could wire callbacks.
+            }
+        }
+
+        if (_buildOpenedTracked || !BuildId.HasValue || EngineFamilyId <= 0)
+        {
+            return;
+        }
+
+        try
+        {
+            await Analytics.Track(
+                JS,
+                Http,
+                "build_opened",
+                new { engine_family_id = EngineFamilyId, source = "open" },
+                userId: Session.UserId,
+                buildId: BuildId,
+                engineFamilyId: EngineFamilyId,
+                source: "open");
+            _buildOpenedTracked = true;
+        }
+        catch
+        {
+            // Swallow analytics errors; they should not disrupt the builder page.
+        }
+    }
+
+    void OpenAuth()
+    {
+        var uri = new Uri(Nav.Uri);
+        var baseUri = uri.GetLeftPart(UriPartial.Path);
+        var query = Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(uri.Query);
+
+        var map = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
+        foreach (var kvp in query)
+        {
+            map[kvp.Key] = kvp.Value.Count > 0 ? kvp.Value[kvp.Value.Count - 1] : null;
+        }
+
+        if (map.TryGetValue("auth", out var existing) && string.Equals(existing, "1", StringComparison.OrdinalIgnoreCase))
+        {
+            Nav.NavigateTo(Nav.Uri, forceLoad: false);
+            return;
+        }
+
+        map["auth"] = "1";
+        var target = Microsoft.AspNetCore.WebUtilities.QueryHelpers.AddQueryString(baseUri, map);
+        Nav.NavigateTo(target, forceLoad: false);
+    }
+
+    void UpdateTreeNameFromList()
+    {
+        if (!TreeId.HasValue)
+        {
+            return;
+        }
+
+        var match = Trees.FirstOrDefault(t => t.tree_id == TreeId.Value);
+        if (match is not null)
+        {
+            TreeName = match.name;
+        }
+    }
+
+    void ResetCategorySelectionsForTreeChange()
+    {
+        CategorySlots.Clear();
+        CategoryOptions.Clear();
+        CategoryOptionsLoading.Clear();
+        FocusedCategoryId = null;
+        Offerings.Clear();
+        CollapsedCategories.Clear();
+    }
+
+    void UpdateDerivedCategoryLists()
+    {
+        MissingCategories = Completion
+            .Where(c => string.Equals(c.status, "incomplete", StringComparison.OrdinalIgnoreCase))
+            .OrderByDescending(c => c.pieces_missing ?? 0m)
+            .ToList();
+        FormulaCategories = Completion
+            .Where(c => string.Equals(c.status, "needs_formula_eval", StringComparison.OrdinalIgnoreCase))
+            .ToList();
+    }
+
+    void ApplyCostPayload(CostResp? cost)
+    {
+        if (cost is null)
+        {
+            return;
+        }
+
+        var estimate = cost.selected_total ?? cost.lowest_mix_total;
+        if (!estimate.HasValue)
+        {
+            return;
+        }
+
+        EstimatedCost = estimate;
+        if (Summary is not null)
+        {
+            Summary = Summary with { estimated_cost_lowest = estimate };
+        }
+    }
+
+    async Task RefreshSummaryAndCostAsync(bool silent = false)
+    {
+        if (_disposed || BuildId is null)
+        {
+            return;
+        }
+
+        var summary = await GetJsonOrDefault<SummaryDto>($"/api/builds/{BuildId}/summary");
+        if (summary is not null)
+        {
+            Summary = summary;
+        }
+
+        var cost = await GetJsonOrDefault<CostResp>($"/api/builds/{BuildId}/cost");
+        ApplyCostPayload(cost);
+
+        if (Summary is not null && Summary.estimated_cost_lowest is null && EstimatedCost.HasValue)
+        {
+            Summary = Summary with { estimated_cost_lowest = EstimatedCost };
+        }
+
+        if (!silent)
+        {
+            UpdateDerivedCategoryLists();
+            StateHasChanged();
+        }
+    }
+
+    async Task<DefaultTreeResult> TryResolveDefaultTreeAsync(long engineFamilyId)
+    {
+        const string fallback = "No default category tree configured for this engine family.";
+
+        try
+        {
+            var response = await Http.GetAsync($"/api/engine-families/{engineFamilyId}/default-tree");
+            if (response.IsSuccessStatusCode)
+            {
+                var payload = await response.Content.ReadFromJsonAsync<DefaultTreeDto>();
+                if (payload is null)
+                {
+                    return new DefaultTreeResult { Success = false, ErrorMessage = fallback };
+                }
+
+                return new DefaultTreeResult
+                {
+                    Success = true,
+                    TreeId = payload.tree_id,
+                    TreeName = payload.tree_name
+                };
+            }
+
+            if (response.StatusCode == HttpStatusCode.NotFound)
+            {
+                var body = await response.Content.ReadAsStringAsync();
+                return new DefaultTreeResult
+                {
+                    Success = false,
+                    ErrorMessage = ParseError(body, fallback)
+                };
+            }
+
+            var detail = await response.Content.ReadAsStringAsync();
+            return new DefaultTreeResult
+            {
+                Success = false,
+                ErrorMessage = $"Failed to resolve default tree: {(int)response.StatusCode} {response.ReasonPhrase}. {detail}"
+            };
+        }
+        catch (HttpRequestException ex) when (HandleUnauthorized(ex, "Sign in to access this build."))
+        {
+            return new DefaultTreeResult { Success = false, ErrorMessage = ErrorMessage };
+        }
+        catch (Exception ex)
+        {
+            return new DefaultTreeResult { Success = false, ErrorMessage = ex.Message };
+        }
+    }
+
+    async Task ResolveDefaultTreeAsync(long engineFamilyId, bool updateServer = false, DefaultTreeResult? preResolved = null)
+    {
+        TreeLoading = true;
+        try
+        {
+            if (engineFamilyId <= 0)
+            {
+                TreeId = null;
+                TreeName = null;
+                TreeError = "Select an engine family.";
+                Categories = new();
+                ResetCategorySelectionsForTreeChange();
+                return;
+            }
+
+            TreeError = null;
+            var result = preResolved ?? await TryResolveDefaultTreeAsync(engineFamilyId);
+            if (!result.Success || !result.TreeId.HasValue)
+            {
+                TreeId = null;
+                TreeName = null;
+                TreeError = result.ErrorMessage ?? "No default category tree configured for this engine family.";
+                Categories = new();
+                ResetCategorySelectionsForTreeChange();
+                return;
+            }
+
+            var treeChanged = TreeId != result.TreeId;
+            TreeId = result.TreeId;
+            TreeName = result.TreeName;
+            TreeError = null;
+            UpdateTreeNameFromList();
+
+            if (treeChanged)
+            {
+                ResetCategorySelectionsForTreeChange();
+            }
+
+            if (updateServer && BuildId is not null && !IsViewer)
+            {
+                try
+                {
+                    var resp = await Http.PutAsJsonAsync($"/api/builds/{BuildId}/tree", new { tree_id = TreeId });
+                    if (!resp.IsSuccessStatusCode)
+                    {
+                        var detail = await resp.Content.ReadAsStringAsync();
+                        ErrorMessage = $"Update tree failed: {(int)resp.StatusCode} {resp.ReasonPhrase}. {detail}";
+                    }
+                }
+                catch (HttpRequestException ex) when (HandleUnauthorized(ex, "Sign in to edit this build."))
+                {
+                    return;
+                }
+            }
+
+            await LoadCategoryHierarchyAsync();
+            await LoadCategorySlotsAsync();
+        }
+        finally
+        {
+            TreeLoading = false;
+            StateHasChanged();
+        }
+    }
+
+    void OnSessionChanged()
+    {
+        _ = InvokeAsync(async () =>
+        {
+            var isSignedIn = Session.IsSignedIn;
+            if (isSignedIn)
+            {
+                ShowAuthPrompt = false;
+                if (!_sessionWasSignedIn)
+                {
+                    ErrorMessage = null;
+                }
+                if (BuildId is not null)
+                {
+                    await RefreshAll();
+                }
+            }
+            else
+            {
+                ShowAuthPrompt = true;
+            }
+
+            _sessionWasSignedIn = isSignedIn;
+            StateHasChanged();
+        });
+    }
+
+    async Task NewBuild()
+    {
+        if (CreatingBuild) return;
+        ErrorMessage = null;
+        CreatingBuild = true;
+        StateHasChanged();
+
+        try
+        {
+            if (!EnsureSignedIn("Sign in to create a new build.")) return;
+            ShowAuthPrompt = false;
+            if (EngineFamilyId <= 0)
+            {
+                ErrorMessage = "Select an engine family first.";
+                return;
+            }
+
+            if (TreeId is null)
+            {
+                ErrorMessage = TreeError ?? "No default category tree is configured for the selected engine family.";
+                return;
+            }
+
+            HttpResponseMessage resp;
+            try
+            {
+                var nameToUse = string.IsNullOrWhiteSpace(BuildName) ? $"Build {DateTime.Now:yyyyMMdd-HHmm}" : BuildName.Trim();
+                resp = await Http.PostAsJsonAsync("/api/builds", new { engine_family_id = EngineFamilyId, name = nameToUse });
+            }
+            catch (HttpRequestException ex) when (ex.StatusCode == HttpStatusCode.Unauthorized)
+            {
+                RequireSignIn("Sign in to create a new build.");
+                return;
+            }
+
+            if (!resp.IsSuccessStatusCode)
+            {
+                if (resp.StatusCode == HttpStatusCode.Unauthorized)
+                {
+                    RequireSignIn("Sign in to create a new build.");
+                    return;
+                }
+                if (resp.StatusCode == HttpStatusCode.Forbidden)
+                {
+                    var quota = await resp.Content.ReadAsStringAsync();
+                    ErrorMessage = ParseError(quota, "Plan limit reached. Upgrade your plan or archive a build to create another.");
+                    await Session.RefreshLimitsAsync();
+                    return;
+                }
+                var body = await resp.Content.ReadAsStringAsync();
+                ErrorMessage = $"Failed to create build: {(int)resp.StatusCode} {resp.ReasonPhrase}. {body}";
+                await Session.RefreshLimitsAsync();
+                return;
+            }
+
+            var created = await resp.Content.ReadFromJsonAsync<BuildResp>();
+            if (created is null)
+            {
+                ErrorMessage = "Unexpected response when creating build.";
+                return;
+            }
+
+            BuildId = created.build_id;
+            if (created.tree_id.HasValue)
+            {
+                TreeId = created.tree_id;
+                UpdateTreeNameFromList();
+            }
+
+            await Session.RefreshLimitsAsync();
+            await RefreshAll();
+
+            if (BuildId.HasValue)
+            {
+                var target = $"/builder/{BuildId.Value}";
+                if (!Nav.Uri.EndsWith(target, System.StringComparison.OrdinalIgnoreCase))
+                {
+                    Nav.NavigateTo(target, replace: true);
+                }
+            }
+        }
+        finally
+        {
+            CreatingBuild = false;
+            StateHasChanged();
+        }
+    }
+
+    Task OnBuildNameChanged(string name)
+    {
+        BuildName = (name ?? string.Empty).Trim();
+        return Task.CompletedTask;
+    }
+
+    async Task SaveCurrentAsync()
+    {
+        if (!EnsureSignedIn("Sign in to save this build.")) return;
+        BuildName = string.IsNullOrWhiteSpace(BuildName) ? $"Build {DateTime.Now:yyyyMMdd-HHmm}" : BuildName.Trim();
+
+        if (IsDraft)
+        {
+            await NewBuild();
+            return;
+        }
+
+        try
+        {
+            var resp = await PatchJsonAsync($"/api/builds/{BuildId}", new { name = BuildName });
+            if (!resp.IsSuccessStatusCode)
+            {
+                var detail = await resp.Content.ReadAsStringAsync();
+                ErrorMessage = $"Save failed: {(int)resp.StatusCode} {resp.ReasonPhrase}. {detail}";
+                return;
+            }
+            await RefreshAll();
+        }
+        catch (HttpRequestException ex) when (HandleUnauthorized(ex, "Sign in to save this build."))
+        {
+            return;
+        }
+        catch (Exception ex)
+        {
+            ErrorMessage = $"Save failed: {ex.Message}";
+        }
+    }
+
+    async Task SaveAsAsync()
+    {
+        if (!EnsureSignedIn("Sign in to save this build.")) return;
+        if (IsDraft)
+        {
+            await SaveCurrentAsync();
+            return;
+        }
+
+        try
+        {
+            var resp = await Http.PostAsync($"/api/builds/{BuildId}/duplicate", null);
+            if (!resp.IsSuccessStatusCode)
+            {
+                var detail = await resp.Content.ReadAsStringAsync();
+                ErrorMessage = $"Save As failed: {(int)resp.StatusCode} {resp.ReasonPhrase}. {detail}";
+                return;
+            }
+
+            var json = await resp.Content.ReadFromJsonAsync<System.Text.Json.JsonElement>();
+            var newId = json.GetProperty("build_id").GetInt64();
+            BuildId = newId;
+
+            await Session.RefreshLimitsAsync();
+
+            if (!string.IsNullOrWhiteSpace(BuildName))
+            {
+                var patch = await PatchJsonAsync($"/api/builds/{newId}", new { name = BuildName.Trim() });
+                if (!patch.IsSuccessStatusCode)
+                {
+                    var detail = await patch.Content.ReadAsStringAsync();
+                    ErrorMessage = $"Save As rename failed: {(int)patch.StatusCode} {patch.ReasonPhrase}. {detail}";
+                }
+            }
+
+            await RefreshAll();
+
+            var target = $"/builder/{newId}";
+            if (!Nav.Uri.EndsWith(target, System.StringComparison.OrdinalIgnoreCase))
+            {
+                Nav.NavigateTo(target, replace: true);
+            }
+        }
+        catch (HttpRequestException ex) when (HandleUnauthorized(ex, "Sign in to save this build."))
+        {
+            return;
+        }
+        catch (Exception ex)
+        {
+            ErrorMessage = $"Save As failed: {ex.Message}";
+        }
+    }
+
+
+
+    async Task RefreshAll()
+    {
+        if (BuildId is null) return;
+        if (!Session.IsSignedIn)
+        {
+            RequireSignIn("Sign in to access this build.");
+            return;
+        }
+
+        var buildResponse = await GetJsonOrDefault<BuildRoleDto>($"/api/builds/{BuildId}");
+        BuildRole = buildResponse?.role ?? BuildRole ?? "owner";
+
+        var buildInfo = buildResponse?.build;
+        var previousTreeId = TreeId;
+        if (buildInfo is not null)
+        {
+            EngineFamilyId = buildInfo.engine_family_id;
+            BuildOwnerId = buildInfo.user_id;
+            BuildName = buildInfo.name;
+
+            if (buildInfo.tree_id.HasValue)
+            {
+                TreeId = buildInfo.tree_id;
+                TreeName = null;
+                TreeError = null;
+                UpdateTreeNameFromList();
+            }
+            else
+            {
+                TreeId = null;
+                TreeName = null;
+                TreeError = "No category tree configured for this build.";
+            }
+        }
+        else
+        {
+            BuildOwnerId = null;
+        }
+
+        if (previousTreeId != TreeId)
+        {
+            ResetCategorySelectionsForTreeChange();
+        }
+
+        await LoadCategoryHierarchyAsync();
+        await LoadCategorySlotsAsync();
+
+        try
+        {
+            Completion = await Http.GetFromJsonAsync<List<CompletionRow>>($"/api/builds/{BuildId}/completion") ?? new();
+        }
+        catch (HttpRequestException ex) when (HandleUnauthorized(ex, "Sign in to access this build."))
+        {
+            return;
+        }
+
+        try
+        {
+            Selections = (await GetJsonOrDefault<List<SelectionDto>>($"/api/builds/{BuildId}/selections")) ?? new();
+        }
+        catch (HttpRequestException ex) when (HandleUnauthorized(ex, "Sign in to access this build."))
+        {
+            return;
+        }
+
+        EnsureCachedOptionsForSelections();
+
+        await RefreshSummaryAndCostAsync(silent: true);
+        BrandMix = await GetJsonOrDefault<List<BrandMixDto>>($"/api/builds/{BuildId}/brand-mix") ?? new();
+        UpdateDerivedCategoryLists();
+        await TriggerCompletionAnalyticsAsync();
+        _sceneMetaBuildId = null;
+        _sceneMetaEngineFamilyId = null;
+        _engineSceneUri = null;
+        StateHasChanged();
+    }
+
+    async Task OnEngineChanged(ChangeEventArgs e)
+    {
+        if (e?.Value is null) return;
+
+        var previous = EngineFamilyId;
+        EngineFamilyId = Convert.ToInt64(e.Value);
+
+        if (EngineFamilyId == previous)
+        {
+            return;
+        }
+
+        if (BuildId is null)
+        {
+            await ResolveDefaultTreeAsync(EngineFamilyId);
+            return;
+        }
+
+        if (IsViewer)
+        {
+            EngineFamilyId = previous;
+            return;
+        }
+
+        if (!EnsureSignedIn("Sign in to edit this build."))
+        {
+            EngineFamilyId = previous;
+            return;
+        }
+
+        var defaultTree = await TryResolveDefaultTreeAsync(EngineFamilyId);
+        if (!defaultTree.Success || !defaultTree.TreeId.HasValue)
+        {
+            EngineFamilyId = previous;
+            TreeError = defaultTree.ErrorMessage ?? "No default category tree configured for this engine family.";
+            StateHasChanged();
+            return;
+        }
+
+        try
+        {
+            var resp = await Http.PutAsJsonAsync($"/api/builds/{BuildId}/engine", new { engine_family_id = EngineFamilyId });
+            if (!resp.IsSuccessStatusCode)
+            {
+                if (resp.StatusCode == HttpStatusCode.Unauthorized)
+                {
+                    RequireSignIn("Sign in to edit this build.");
+                }
+                else
+                {
+                    var body = await resp.Content.ReadAsStringAsync();
+                    ErrorMessage = $"Update engine failed: {(int)resp.StatusCode} {resp.ReasonPhrase}. {body}";
+                }
+
+                EngineFamilyId = previous;
+                return;
+            }
+        }
+        catch (HttpRequestException ex) when (HandleUnauthorized(ex, "Sign in to edit this build."))
+        {
+            EngineFamilyId = previous;
+            return;
+        }
+        catch (Exception ex)
+        {
+            ErrorMessage = $"Update engine failed: {ex.Message}";
+            EngineFamilyId = previous;
+            return;
+        }
+
+        await ResolveDefaultTreeAsync(EngineFamilyId, updateServer: true, preResolved: defaultTree);
+        await RefreshAll();
+    }
+
+    void ApplyBuildStatePayload(JsonElement payload)
+    {
+        if (payload.ValueKind != JsonValueKind.Object)
+        {
+            return;
+        }
+
+        if (payload.TryGetProperty("completion", out var completionNode) && completionNode.ValueKind == JsonValueKind.Array)
+        {
+            Completion = completionNode.Deserialize<List<CompletionRow>>() ?? new();
+        }
+
+        SummaryDto? summaryPayload = null;
+        if (payload.TryGetProperty("summary", out var summaryNode) && summaryNode.ValueKind == JsonValueKind.Object)
+        {
+            summaryPayload = summaryNode.Deserialize<SummaryDto?>();
+            if (summaryPayload is not null)
+            {
+                Summary = summaryPayload;
+            }
+        }
+
+        CostResp? costPayload = null;
+        if (payload.TryGetProperty("cost", out var costNode) && costNode.ValueKind == JsonValueKind.Object)
+        {
+            costPayload = costNode.Deserialize<CostResp>();
+            ApplyCostPayload(costPayload);
+        }
+
+        if (payload.TryGetProperty("selections", out var selectionNode) && selectionNode.ValueKind == JsonValueKind.Array)
+        {
+            Selections = selectionNode.Deserialize<List<SelectionDto>>() ?? new();
+            EnsureCachedOptionsForSelections();
+        }
+
+        if (summaryPayload is not null && Summary is not null && EstimatedCost.HasValue && (Summary.estimated_cost_lowest is null || Summary.estimated_cost_lowest == 0m))
+        {
+            Summary = Summary with { estimated_cost_lowest = EstimatedCost };
+        }
+
+        UpdateDerivedCategoryLists();
+        _ = TriggerCompletionAnalyticsAsync();
+        StateHasChanged();
+    }
+
+    async Task PlacePartAsync(string? socketPath, string? gltfUri, string? attachNode)
+    {
+        if (string.IsNullOrWhiteSpace(socketPath) || !_engineSceneReady)
+        {
+            return;
+        }
+
+        var payload = new { uri = gltfUri, attachNode = string.IsNullOrWhiteSpace(attachNode) ? "Attach_Main" : attachNode };
+
+        try
+        {
+            if (!string.IsNullOrWhiteSpace(gltfUri))
+            {
+                if (_engineModule is not null)
+                {
+                    await _engineModule.InvokeVoidAsync("placeBySocketPath", socketPath, payload);
+                }
+                else
+                {
+                    await JS.InvokeVoidAsync("Engine3D.placeBySocketPath", socketPath, payload);
+                }
+            }
+            else
+            {
+                if (_engineModule is not null)
+                {
+                    await _engineModule.InvokeVoidAsync("removeBySocketPath", socketPath);
+                }
+                else
+                {
+                    await JS.InvokeVoidAsync("Engine3D.removeBySocketPath", socketPath);
+                }
+            }
+
+            if (_engineModule is not null)
+            {
+                await _engineModule.InvokeVoidAsync("refreshBadges");
+            }
+            else
+            {
+                await JS.InvokeVoidAsync("Engine3D.refreshBadges");
+            }
+        }
+        catch (JSDisconnectedException)
+        {
+            // Ignore; circuit disposed.
+        }
+        catch (JSException)
+        {
+            // Swallow asset load failures (e.g., missing GLB) and clear the socket so the UI keeps working.
+            try
+            {
+                if (_engineModule is not null)
+                {
+                    await _engineModule.InvokeVoidAsync("removeBySocketPath", socketPath);
+                    await _engineModule.InvokeVoidAsync("refreshBadges");
+                }
+                else
+                {
+                    await JS.InvokeVoidAsync("Engine3D.removeBySocketPath", socketPath);
+                    await JS.InvokeVoidAsync("Engine3D.refreshBadges");
+                }
+            }
+            catch (JSDisconnectedException)
+            {
+                // Ignore; circuit disposed.
+            }
+        }
+    }
+
+    async Task RefreshSceneAfterRemovalAsync(string? socketPath)
+    {
+        if (!_engineSceneReady)
+        {
+            return;
+        }
+
+        try
+        {
+            if (_engineModule is not null)
+            {
+                if (!string.IsNullOrWhiteSpace(socketPath))
+                {
+                    await _engineModule.InvokeVoidAsync("removeBySocketPath", socketPath);
+                }
+
+                await _engineModule.InvokeVoidAsync("refreshBadges");
+            }
+            else
+            {
+                if (!string.IsNullOrWhiteSpace(socketPath))
+                {
+                    await JS.InvokeVoidAsync("Engine3D.removeBySocketPath", socketPath);
+                }
+
+                await JS.InvokeVoidAsync("Engine3D.refreshBadges");
+            }
+        }
+        catch (JSDisconnectedException)
+        {
+            // Ignore; circuit disposed.
+        }
+        catch (JSException ex)
+        {
+            Console.Error.WriteLine($"Engine viewer clear failed: {ex.Message}");
+        }
+    }
+
+    long? GetSelectedPartId(long categoryId, long slotId)
+    {
+        var slotMatch = SlotBadges.FirstOrDefault(s => s.SlotId == slotId);
+        if (slotMatch?.PartId is long partId && partId > 0)
+        {
+            return partId;
+        }
+
+        var selection = Selections.FirstOrDefault(s => s.category_id == categoryId);
+        return selection?.part_id;
+    }
+
+    void EnsureCachedOptionsForSelections()
+    {
+        if (Selections.Count == 0 || CategorySlots.Count == 0)
+        {
+            return;
+        }
+
+        var categories = CategorySlots.Select(c => c.CategoryId).ToHashSet();
+
+        foreach (var selection in Selections)
+        {
+            if (!categories.Contains(selection.category_id))
+            {
+                continue;
+            }
+
+            if (!CategoryOptions.TryGetValue(selection.category_id, out var options))
+            {
+                options = new List<PartOptionVm>();
+                CategoryOptions[selection.category_id] = options;
+            }
+
+            if (options.Any(p => p.Id == selection.part_id))
+            {
+                continue;
+            }
+
+            var placeholder = new PartOptionVm(
+                selection.part_id,
+                selection.part_name,
+                selection.sku,
+                null,
+                "Attach_Main");
+
+            options.Add(placeholder);
+            options.Sort((a, b) => string.Compare(a.Name, b.Name, StringComparison.OrdinalIgnoreCase));
+        }
+    }
+
+    async Task EnsureOptions(long categoryId)
+    {
+        if (BuildId is null)
+        {
+            return;
+        }
+
+        if (CategoryOptions.ContainsKey(categoryId) || CategoryOptionsLoading.Contains(categoryId))
+        {
+            return;
+        }
+
+        CategoryOptionsLoading.Add(categoryId);
+        await InvokeAsync(StateHasChanged);
+
+        List<PartOptionVm> options;
+        try
+        {
+            options = await Http.GetFromJsonAsync<List<PartOptionVm>>($"/api/builds/{BuildId}/category/{categoryId}/parts") ?? new();
+        }
+        catch (HttpRequestException ex) when (HandleUnauthorized(ex, "Sign in to access this build."))
+        {
+            CategoryOptionsLoading.Remove(categoryId);
+            await InvokeAsync(StateHasChanged);
+            return;
+        }
+        catch (Exception ex)
+        {
+            ErrorMessage = $"Failed to load parts: {ex.Message}";
+            options = new();
+        }
+
+        CategoryOptions[categoryId] = options;
+        CategoryOptionsLoading.Remove(categoryId);
+        await InvokeAsync(StateHasChanged);
+    }
+
+    async Task OnPickPart(CategorySlotVm slot, ChangeEventArgs e)
+    {
+        var raw = e.Value?.ToString();
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            var existing = Selections.FirstOrDefault(s => s.category_id == slot.CategoryId);
+            if (existing is not null)
+            {
+                await RemoveSelection(existing);
+            }
+            return;
+        }
+
+        if (!long.TryParse(raw, out var partId))
+        {
+            return;
+        }
+
+        await SubmitPartSelectionAsync(slot.SlotId, slot.CategoryId, partId);
+    }
+
+    async Task SubmitPartSelectionAsync(long slotId, long categoryId, long partId)
+    {
+        if (IsViewer || !BuildId.HasValue)
+        {
+            return;
+        }
+
+        if (!EnsureSignedIn("Sign in to edit this build."))
+        {
+            return;
+        }
+
+        ErrorMessage = null;
+
+        HttpResponseMessage response;
+        try
+        {
+            response = await Http.PostAsJsonAsync("/api/builds/select", new
+            {
+                BuildId = BuildId.Value,
+                SlotId = slotId,
+                CategoryId = categoryId,
+                PartId = partId
+            });
+        }
+        catch (HttpRequestException ex) when (HandleUnauthorized(ex, "Sign in to edit this build."))
+        {
+            return;
+        }
+        catch (Exception ex)
+        {
+            ErrorMessage = $"Selection failed: {ex.Message}";
+            return;
+        }
+
+        if (!response.IsSuccessStatusCode)
+        {
+            if (response.StatusCode == HttpStatusCode.Unauthorized)
+            {
+                RequireSignIn("Sign in to edit this build.");
+                return;
+            }
+
+            if (response.StatusCode == HttpStatusCode.Forbidden)
+            {
+                ErrorMessage = "You do not have permission to edit this build.";
+                return;
+            }
+
+            var detail = await response.Content.ReadAsStringAsync();
+            ErrorMessage = ParseError(detail, "Selection failed.");
+            return;
+        }
+
+        JsonElement payload;
+        try
+        {
+            payload = await response.Content.ReadFromJsonAsync<JsonElement>();
+        }
+        catch
+        {
+            await RefreshAll();
+            return;
+        }
+
+        if (payload.TryGetProperty("place", out var placeNode) && placeNode.ValueKind == JsonValueKind.Object)
+        {
+            var socketPath = placeNode.TryGetProperty("socketPath", out var socketNode) && socketNode.ValueKind == JsonValueKind.String
+                ? socketNode.GetString()
+                : null;
+
+            var uri = placeNode.TryGetProperty("uri", out var uriNode) && uriNode.ValueKind == JsonValueKind.String
+                ? uriNode.GetString()
+                : null;
+
+            var attach = placeNode.TryGetProperty("attachNode", out var attachNode) && attachNode.ValueKind == JsonValueKind.String
+                ? attachNode.GetString()
+                : null;
+
+            await PlacePartAsync(socketPath, uri, attach);
+        }
+
+        FocusedCategoryId = categoryId;
+
+        ApplyBuildStatePayload(payload);
+        await RefreshSummaryAndCostAsync();
+        await RefreshBrandMixAsync();
+    }
+
+    async Task RemoveSelection(SelectionDto s)
+    {
+        if (IsViewer || BuildId is null)
+        {
+            return;
+        }
+
+        if (!EnsureSignedIn("Sign in to edit this build."))
+        {
+            return;
+        }
+
+        long? slotId = null;
+        string? socketHint = null;
+
+        var slotMatch = SlotBadges.FirstOrDefault(slot => slot.PartId == s.part_id);
+        if (slotMatch is not null)
+        {
+            slotId = slotMatch.SlotId;
+            socketHint = !string.IsNullOrWhiteSpace(slotMatch.GltfNodePath)
+                ? slotMatch.GltfNodePath
+                : slotMatch.SlotKey;
+        }
+
+        if (slotId is null || string.IsNullOrWhiteSpace(socketHint))
+        {
+            var categorySlot = CategorySlots.FirstOrDefault(c => c.CategoryId == s.category_id);
+            if (categorySlot is not null)
+            {
+                slotId ??= categorySlot.SlotId;
+                socketHint ??= !string.IsNullOrWhiteSpace(categorySlot.GltfNodePath)
+                    ? categorySlot.GltfNodePath
+                    : categorySlot.SlotKey;
+            }
+        }
+
+        HttpResponseMessage resp;
+        try
+        {
+            if (slotId.HasValue)
+            {
+                resp = await Http.PostAsJsonAsync("/api/builds/clear", new
+                {
+                    BuildId = BuildId.Value,
+                    SlotId = slotId,
+                    CategoryId = (long?)s.category_id
+                });
+            }
+            else
+            {
+                resp = await Http.DeleteAsync($"/api/builds/{BuildId}/selections?category_id={s.category_id}&part_id={s.part_id}");
+            }
+        }
+        catch (HttpRequestException ex) when (HandleUnauthorized(ex, "Sign in to edit this build."))
+        {
+            return;
+        }
+
+        if (!resp.IsSuccessStatusCode)
+        {
+            if (resp.StatusCode == HttpStatusCode.Unauthorized)
+            {
+                RequireSignIn("Sign in to edit this build.");
+                return;
+            }
+
+            ErrorMessage = $"Remove part failed: {(int)resp.StatusCode} {resp.ReasonPhrase}";
+            return;
+        }
+
+        JsonElement payload;
+        try
+        {
+            payload = await resp.Content.ReadFromJsonAsync<JsonElement>();
+        }
+        catch (JsonException)
+        {
+            await RefreshAll();
+            return;
+        }
+        catch (NotSupportedException)
+        {
+            await RefreshAll();
+            return;
+        }
+
+        if (payload.ValueKind == JsonValueKind.Object &&
+            payload.TryGetProperty("socketPath", out var socketNode) &&
+            socketNode.ValueKind == JsonValueKind.String)
+        {
+            socketHint = socketNode.GetString();
+        }
+
+        await RefreshSceneAfterRemovalAsync(socketHint);
+        ApplyBuildStatePayload(payload);
+        await RefreshSummaryAndCostAsync();
+        await RefreshBrandMixAsync();
+    }
+
+    async Task IncrementSelectionQty(SelectionDto s, bool alreadyAdjusting = false)
+    {
+        if (IsViewer || BuildId is null)
+        {
+            return;
+        }
+
+        if (!EnsureSignedIn("Sign in to edit this build."))
+        {
+            return;
+        }
+
+        var key = (s.category_id, s.part_id);
+        if (alreadyAdjusting || AdjustingSelections.Contains(key))
+        {
+            return;
+        }
+        AdjustingSelections.Add(key);
+        StateHasChanged();
+
+        try
+        {
+            var resp = await Http.PostAsJsonAsync($"/api/builds/{BuildId}/selections/increment", new
+            {
+                category_id = s.category_id,
+                part_id = s.part_id,
+                delta = 1m
+            });
+
+            if (!resp.IsSuccessStatusCode)
+            {
+                if (resp.StatusCode == HttpStatusCode.Unauthorized)
+                {
+                    RequireSignIn("Sign in to edit this build.");
+                    return;
+                }
+
+                if (resp.StatusCode == HttpStatusCode.Forbidden)
+                {
+                    ErrorMessage = "You do not have permission to edit this build.";
+                    return;
+                }
+
+                var detail = await resp.Content.ReadAsStringAsync();
+                ErrorMessage = ParseError(detail, "Unable to add quantity.");
+                return;
+            }
+
+            JsonElement payload;
+            try
+            {
+                payload = await resp.Content.ReadFromJsonAsync<JsonElement>();
+            }
+            catch
+            {
+                await RefreshAll();
+                return;
+            }
+
+            ApplyBuildStatePayload(payload);
+            await RefreshSummaryAndCostAsync();
+            await RefreshBrandMixAsync();
+        }
+        catch (HttpRequestException ex) when (HandleUnauthorized(ex, "Sign in to edit this build."))
+        {
+            return;
+        }
+        catch (Exception ex)
+        {
+            ErrorMessage = $"Unable to add quantity: {ex.Message}";
+        }
+        finally
+        {
+            AdjustingSelections.Remove(key);
+            StateHasChanged();
+        }
+    }
+
+    async Task DecrementSelectionQty(SelectionDto s, bool alreadyAdjusting = false)
+    {
+        if (IsViewer || BuildId is null)
+        {
+            return;
+        }
+
+        if (!EnsureSignedIn("Sign in to edit this build."))
+        {
+            return;
+        }
+
+        var key = (s.category_id, s.part_id);
+        if (alreadyAdjusting || AdjustingSelections.Contains(key))
+        {
+            return;
+        }
+
+        AdjustingSelections.Add(key);
+        StateHasChanged();
+
+        try
+        {
+            var resp = await Http.PostAsJsonAsync($"/api/builds/{BuildId}/selections/increment", new
+            {
+                category_id = s.category_id,
+                part_id = s.part_id,
+                delta = -1m
+            });
+
+            if (!resp.IsSuccessStatusCode)
+            {
+                if (resp.StatusCode == HttpStatusCode.Unauthorized)
+                {
+                    RequireSignIn("Sign in to edit this build.");
+                    return;
+                }
+
+                if (resp.StatusCode == HttpStatusCode.Forbidden)
+                {
+                    ErrorMessage = "You do not have permission to edit this build.";
+                    return;
+                }
+
+                var detail = await resp.Content.ReadAsStringAsync();
+                ErrorMessage = ParseError(detail, "Unable to remove quantity.");
+                return;
+            }
+
+            JsonElement payload;
+            try
+            {
+                payload = await resp.Content.ReadFromJsonAsync<JsonElement>();
+            }
+            catch
+            {
+                await RefreshAll();
+                return;
+            }
+
+            ApplyBuildStatePayload(payload);
+            await RefreshSummaryAndCostAsync();
+            await RefreshBrandMixAsync();
+        }
+        catch (HttpRequestException ex) when (HandleUnauthorized(ex, "Sign in to edit this build."))
+        {
+            return;
+        }
+        catch (Exception ex)
+        {
+            ErrorMessage = $"Unable to remove quantity: {ex.Message}";
+        }
+        finally
+        {
+            AdjustingSelections.Remove(key);
+            StateHasChanged();
+        }
+    }
+
+    async Task LoadOfferings(long partId)
+    {
+        var list = await Http.GetFromJsonAsync<List<OfferingDto>>("/api/parts/" + partId + "/offerings") ?? new();
+        Offerings = list.Select(o => (o.offering_id, o.vendor_id, o.vendor_name, o.price, o.currency, o.availability, partId)).ToList();
+        StateHasChanged();
+    }
+
+    async Task RefreshBrandMixAsync()
+    {
+        if (BuildId is null) return;
+        BrandMix = await GetJsonOrDefault<List<BrandMixDto>>($"/api/builds/{BuildId}/brand-mix") ?? new();
+        StateHasChanged();
+    }
+
+    async Task LoadBuyPlanAsync()
+    {
+        if (BuildId is null) return;
+        if (!EnsureSignedIn("Sign in to generate a buy plan.")) return;
+
+        BuyPlanLoading = true;
+        BuyPlanError = null;
+
+        try
+        {
+            var response = await Http.PostAsJsonAsync($"/api/builds/{BuildId}/buyplan?mode={BuyMode}", new { });
+            response.EnsureSuccessStatusCode();
+
+            var payload = await response.Content.ReadFromJsonAsync<JsonElement>();
+            if (payload.TryGetProperty("items", out var itemsNode))
+            {
+                BuyPlanItems = itemsNode.Deserialize<List<BuyPlanItemDto>>() ?? new();
+            }
+            else
+            {
+                BuyPlanItems = new();
+            }
+
+            if (payload.TryGetProperty("totals", out var totalsNode) && totalsNode.TryGetProperty("items", out var totalNode) && totalNode.TryGetDecimal(out var total))
+            {
+                BuyPlanTotal = total;
+            }
+            else
+            {
+                BuyPlanTotal = 0m;
+            }
+
+            if (payload.TryGetProperty("vendor", out var vendorNode) && vendorNode.ValueKind == JsonValueKind.String)
+            {
+                BuyPlanVendor = vendorNode.GetString();
+            }
+            else
+            {
+                BuyPlanVendor = null;
+            }
+        }
+        catch (HttpRequestException ex) when (HandleUnauthorized(ex, "Sign in to generate a buy plan."))
+        {
+            BuyPlanItems = new();
+            BuyPlanTotal = 0m;
+            BuyPlanVendor = null;
+        }
+        catch (Exception ex)
+        {
+            BuyPlanError = ex.Message;
+            BuyPlanItems = new();
+            BuyPlanTotal = 0m;
+            BuyPlanVendor = null;
+        }
+        finally
+        {
+            BuyPlanLoading = false;
+            StateHasChanged();
+        }
+    }
+
+    async Task OnBuyModeChanged(ChangeEventArgs e)
+    {
+        var value = e.Value?.ToString();
+        BuyMode = string.Equals(value, "singleVendor", StringComparison.OrdinalIgnoreCase) ? "singleVendor" : "cheapest";
+        if (BuyPlanItems.Any())
+        {
+            await LoadBuyPlanAsync();
+        }
+        else
+        {
+            StateHasChanged();
+        }
+    }
+
+    async Task BuyPlanClickAsync(BuyPlanItemDto item)
+    {
+        if (BuildId is null) return;
+        if (!EnsureSignedIn("Sign in to shop.")) return;
+        BuyPlanError = null;
+
+        try
+        {
+            var response = await Http.PostAsJsonAsync("/api/shop/click", new { build_id = BuildId, part_id = item.part_id, offering_id = item.offering_id });
+            if (!response.IsSuccessStatusCode)
+            {
+                BuyPlanError = $"Unable to route to vendor ({response.StatusCode}).";
+                return;
+            }
+
+            var payload = await response.Content.ReadFromJsonAsync<JsonElement>();
+            if (payload.TryGetProperty("url", out var node))
+            {
+                var url = node.GetString();
+                if (!string.IsNullOrEmpty(url))
+                {
+                    Nav.NavigateTo(url!, forceLoad: true);
+                }
+            }
+        }
+        catch (HttpRequestException ex) when (HandleUnauthorized(ex, "Sign in to shop."))
+        {
+            // message handled in helper
+        }
+        catch (Exception ex)
+        {
+            BuyPlanError = ex.Message;
+        }
+    }
+
+    async Task BuyOffering((long offering_id, long vendor_id, string vendor_name, decimal? price, string currency, string availability, long part_id) offering)
+    {
+        if (BuildId is null) return;
+        if (!EnsureSignedIn("Sign in to shop.")) return;
+        ErrorMessage = null;
+
+        try
+        {
+            var response = await Http.PostAsJsonAsync("/api/shop/click", new { build_id = BuildId, part_id = offering.part_id, offering_id = offering.offering_id });
+            if (!response.IsSuccessStatusCode)
+            {
+                ErrorMessage = $"Unable to route to vendor ({response.StatusCode}).";
+                return;
+            }
+
+            var payload = await response.Content.ReadFromJsonAsync<JsonElement>();
+            if (payload.TryGetProperty("url", out var node))
+            {
+                var url = node.GetString();
+                if (!string.IsNullOrEmpty(url))
+                {
+                    Nav.NavigateTo(url!, forceLoad: true);
+                }
+            }
+        }
+        catch (HttpRequestException ex) when (HandleUnauthorized(ex, "Sign in to shop."))
+        {
+            // message handled in helper
+        }
+        catch (Exception ex)
+        {
+            ErrorMessage = ex.Message;
+        }
+    }
+
+    async Task LoadCategorySlotsAsync()
+    {
+        if (BuildId is null)
+        {
+            CategorySlots = new();
+            CategoryOptions.Clear();
+            CategoryOptionsLoading.Clear();
+            return;
+        }
+
+        try
+        {
+            var response = await Http.GetFromJsonAsync<List<CategorySlotVm>>($"/api/builds/{BuildId}/categories") ?? new();
+            CategorySlots = response
+                .OrderBy(c => c.SubsystemName ?? string.Empty, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(c => c.CategoryName, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(c => c.SlotKey, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            var validCategoryIds = CategorySlots.Select(c => c.CategoryId).ToHashSet();
+            var stale = CategoryOptions.Keys.Where(id => !validCategoryIds.Contains(id)).ToList();
+            foreach (var key in stale)
+            {
+                CategoryOptions.Remove(key);
+            }
+
+            CategoryOptionsLoading.RemoveWhere(id => !validCategoryIds.Contains(id));
+        }
+        catch (HttpRequestException ex) when (HandleUnauthorized(ex, "Sign in to access this build."))
+        {
+            CategorySlots = new();
+        }
+    }
+
+    async Task LoadCategoryHierarchyAsync()
+    {
+        try
+        {
+            if (TreeId.HasValue)
+            {
+                Categories = await GetJsonOrDefault<List<CategoryNode>>($"/api/trees/{TreeId.Value}/hierarchy") ?? new();
+                CategoryLookup = Categories.ToDictionary(c => c.CategoryId, c => c);
+                CategoryChildren = new Dictionary<long, List<CategoryNode>>();
+                foreach (var node in Categories)
+                {
+                    if (node.ParentId is long parentId)
+                    {
+                        if (!CategoryChildren.TryGetValue(parentId, out var list))
+                        {
+                            list = new List<CategoryNode>();
+                            CategoryChildren[parentId] = list;
+                        }
+                        list.Add(node);
+                    }
+                }
+                CollapsedCategories.RemoveWhere(id => !CategoryLookup.ContainsKey(id));
+            }
+            else
+            {
+                Categories = new();
+                CategoryLookup.Clear();
+                CategoryChildren.Clear();
+                CollapsedCategories.Clear();
+            }
+        }
+        catch (HttpRequestException ex) when (HandleUnauthorized(ex, "Sign in to access this build."))
+        {
+            Categories = new();
+            CategoryLookup.Clear();
+            CategoryChildren.Clear();
+            CollapsedCategories.Clear();
+        }
+    }
+
+    private async Task TriggerCompletionAnalyticsAsync()
+    {
+        if (BuildId is null || EngineFamilyId <= 0 || Completion.Count == 0)
+        {
+            return;
+        }
+
+        foreach (var row in Completion)
+        {
+            if (!string.Equals(row.status, "complete", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            var required = row.required_qty ?? 0m;
+            if (required <= 0m)
+            {
+                continue;
+            }
+
+            var supplied = row.pieces_supplied ?? 0m;
+            await FireCategoryCompletedAsync(row.category_id, required, supplied);
+        }
+
+        var allComplete = Completion.Count > 0 && Completion.All(r =>
+            string.Equals(r.status, "complete", StringComparison.OrdinalIgnoreCase));
+
+        if (!allComplete)
+        {
+            return;
+        }
+
+        var completedIds = Completion
+            .Where(r => string.Equals(r.status, "complete", StringComparison.OrdinalIgnoreCase))
+            .Select(r => r.category_id)
+            .ToArray();
+
+        if (completedIds.Length == 0)
+        {
+            return;
+        }
+
+        await FireBuildCompletedAsync(completedIds);
+    }
+
+    private async Task FireCategoryCompletedAsync(long categoryId, decimal requiredQty, decimal suppliedQty)
+    {
+        if (BuildId is null)
+        {
+            return;
+        }
+
+        try
+        {
+            var onceKey = $"aha.{BuildId.Value}.{categoryId}";
+            await Analytics.TrackOnce(
+                JS,
+                Http,
+                onceKey,
+                "category_completed",
+                new { category_id = categoryId, required_qty = requiredQty, supplied_qty = suppliedQty },
+                userId: Session?.UserId,
+                buildId: BuildId,
+                engineFamilyId: EngineFamilyId,
+                categoryId: categoryId);
+        }
+        catch
+        {
+            // Analytics failures should not interrupt the builder experience.
+        }
+    }
+
+    private async Task FireBuildCompletedAsync(long[] completedCategoryIds)
+    {
+        if (BuildId is null)
+        {
+            return;
+        }
+
+        try
+        {
+            var onceKey = $"done.{BuildId.Value}";
+            await Analytics.TrackOnce(
+                JS,
+                Http,
+                onceKey,
+                "build_completed",
+                new { categories = completedCategoryIds },
+                userId: Session?.UserId,
+                buildId: BuildId,
+                engineFamilyId: EngineFamilyId);
+        }
+        catch
+        {
+            // Analytics failures should not interrupt the builder experience.
+        }
+    }
+
+    private async Task OpenSocketsAsync(long buildId)
+    {
+        if (!EnsureSignedIn("Sign in to access the socket preview."))
+        {
+            return;
+        }
+
+        if (SocketRoutePending)
+        {
+            return;
+        }
+
+        SocketRoutePending = true;
+        RouteToast = null;
+        ErrorMessage = null;
+
+        var request = new RouteToSocketsRequest(
+            buildId,
+            EngineFamilyId > 0 ? EngineFamilyId : null,
+            TreeId);
+
+        try
+        {
+            var response = await Http.PostAsJsonAsync("/api/builds/route-to-sockets", request);
+            if (!response.IsSuccessStatusCode)
+            {
+                if (response.StatusCode == HttpStatusCode.Unauthorized)
+                {
+                    RequireSignIn("Sign in to access the socket preview.");
+                    return;
+                }
+
+                var detail = await response.Content.ReadAsStringAsync();
+                ErrorMessage = ParseError(detail, "Unable to open the socket preview.");
+                RouteToast = "Could not open socket builder.";
+                return;
+            }
+
+            var result = await response.Content.ReadFromJsonAsync<RouteToSocketsResult>();
+            if (result is null)
+            {
+                RouteToast = "Opening socket builder…";
+                return;
+            }
+
+            RouteToast = SocketRouteMessages.GetToastMessage(result);
+            Nav.NavigateTo($"/builder-sockets/{result.TargetBuildId}");
+        }
+        catch (HttpRequestException ex) when (HandleUnauthorized(ex, "Sign in to access the socket preview."))
+        {
+            RouteToast = "Sign in to continue.";
+        }
+        catch (Exception ex)
+        {
+            ErrorMessage = $"Unable to open the socket preview: {ex.Message}";
+            RouteToast = "Could not open socket builder.";
+        }
+        finally
+        {
+            SocketRoutePending = false;
+        }
+    }
+
+    async Task ClaimBuild()
+    {
+        if (BuildId is null) return;
+        if (!EnsureSignedIn("Sign in to save this build.")) return;
+        Claiming = true;
+        ErrorMessage = null;
+        try
+        {
+            var resp = await Http.PostAsync($"/api/builds/{BuildId}/claim", null);
+            if (resp.IsSuccessStatusCode)
+            {
+                await RefreshAll();
+                return;
+            }
+
+            if (resp.StatusCode == HttpStatusCode.Unauthorized)
+            {
+                RequireSignIn("Sign in to save this build.");
+                return;
+            }
+
+            if (resp.StatusCode == HttpStatusCode.Forbidden)
+            {
+                var body = await resp.Content.ReadAsStringAsync();
+                ErrorMessage = ParseError(body, "Plan limit reached. Upgrade your plan to save additional builds.");
+                await Session.RefreshLimitsAsync();
+                return;
+            }
+
+            var detail = await resp.Content.ReadAsStringAsync();
+            ErrorMessage = $"Save failed: {(int)resp.StatusCode} {resp.ReasonPhrase}. {detail}";
+        }
+        catch (HttpRequestException ex) when (HandleUnauthorized(ex, "Sign in to save this build."))
+        {
+            // message set via helper
+        }
+        catch (Exception ex)
+        {
+            ErrorMessage = $"Save failed: {ex.Message}";
+        }
+        finally
+        {
+            Claiming = false;
+        }
+
+        await Session.RefreshLimitsAsync();
+    }
+
+    bool EnsureSignedIn(string message)
+    {
+        if (Session.IsSignedIn) return true;
+        RequireSignIn(message);
+        return false;
+    }
+
+    void RequireSignIn(string message)
+    {
+        ErrorMessage = message;
+        ShowAuthPrompt = true;
+    }
+
+    bool HandleUnauthorized(HttpRequestException ex, string message)
+    {
+        if (ex.StatusCode == HttpStatusCode.Unauthorized)
+        {
+            RequireSignIn(message);
+            return true;
+        }
+
+        return false;
+    }
+
+    static string ParseError(string content, string fallback)
+    {
+        if (string.IsNullOrWhiteSpace(content))
+        {
+            return fallback;
+        }
+
+        try
+        {
+            using var doc = JsonDocument.Parse(content);
+            if (doc.RootElement.ValueKind == JsonValueKind.Object)
+            {
+                if (doc.RootElement.TryGetProperty("message", out var message) && message.ValueKind == JsonValueKind.String)
+                {
+                    var text = message.GetString();
+                    if (!string.IsNullOrWhiteSpace(text))
+                    {
+                        return text!;
+                    }
+                }
+
+                if (doc.RootElement.TryGetProperty("error", out var error) && error.ValueKind == JsonValueKind.String)
+                {
+                    var text = error.GetString();
+                    if (!string.IsNullOrWhiteSpace(text))
+                    {
+                        return text!;
+                    }
+                }
+            }
+        }
+        catch
+        {
+            // Ignore parse errors; fall back to provided message.
+        }
+
+        return fallback;
+    }
+
+    static string FormatCurrency(decimal? value)
+        => value.HasValue ? FormattableString.Invariant($"${value.Value:0.00}") : "—";
+
+    static string FormatPercent(decimal? value)
+        => value.HasValue ? FormattableString.Invariant($"{value.Value:0.0}%") : "—";
+
+    static string FormatDecimal(decimal? value)
+        => value.HasValue ? FormattableString.Invariant($"{value.Value:0.##}") : "—";
+
+    static string FormatStatusBadge(string? status) => status switch
+    {
+        "complete" => "badge bg-success",
+        "incomplete" => "badge bg-warning text-dark",
+        "needs_formula_eval" => "badge bg-info text-dark",
+        _ => "badge bg-secondary"
+    };
+
+    static string FormatMode(string? mode) => string.IsNullOrWhiteSpace(mode) ? "—" : mode;
+
+    bool HasChildCategories(long categoryId)
+        => CategoryChildren.TryGetValue(categoryId, out var list) && list.Count > 0;
+
+    bool IsCategoryVisible(CategoryNode category)
+    {
+        var ancestorId = category.ParentId;
+        while (ancestorId is long id)
+        {
+            if (CollapsedCategories.Contains(id))
+            {
+                return false;
+            }
+
+            if (!CategoryLookup.TryGetValue(id, out var parent))
+            {
+                break;
+            }
+
+            ancestorId = parent.ParentId;
+        }
+
+        return true;
+    }
+
+    void ToggleCategoryCollapse(long categoryId)
+    {
+        if (!HasChildCategories(categoryId))
+        {
+            return;
+        }
+
+        if (CollapsedCategories.Contains(categoryId))
+        {
+            CollapsedCategories.Remove(categoryId);
+        }
+        else
+        {
+            CollapsedCategories.Add(categoryId);
+        }
+
+        StateHasChanged();
+    }
+
+    static string GetCategoryTreeOffset(int depth)
+    {
+        var safeDepth = Math.Clamp(depth, 0, 12);
+        if (safeDepth == 0)
+        {
+            return string.Empty;
+        }
+
+        var margin = safeDepth * 14;
+        var padding = 12;
+        return $"margin-left:{margin}px;padding-left:{padding}px;border-left:1px dashed #d1d5db;";
+    }
+
+
+    Task<HttpResponseMessage> PatchJsonAsync<T>(string url, T payload)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Patch, url) { Content = JsonContent.Create(payload) };
+        return Http.SendAsync(request);
+    }
+
+    async Task<T?> GetJsonOrDefault<T>(string url)
+    {
+        if (_disposed)
+        {
+            return default;
+        }
+
+        try
+        {
+            return await Http.GetFromJsonAsync<T>(url);
+        }
+        catch (HttpRequestException ex) when (ex.StatusCode == HttpStatusCode.NotFound)
+        {
+            return default;
+        }
+        catch (HttpRequestException ex) when (HandleUnauthorized(ex, "Sign in to access this build."))
+        {
+            return default;
+        }
+    }
+
+    async Task<string?> EnsureSceneGltfUriAsync()
+    {
+        if (_disposed)
+        {
+            return null;
+        }
+
+        if (!BuildId.HasValue)
+        {
+            _sceneMetaBuildId = null;
+            _sceneMetaEngineFamilyId = null;
+            _engineSceneUri = null;
+            return null;
+        }
+
+        if (_sceneMetaBuildId == BuildId &&
+            _sceneMetaEngineFamilyId == EngineFamilyId &&
+            !string.IsNullOrWhiteSpace(_engineSceneUri))
+        {
+            return _engineSceneUri;
+        }
+
+        var meta = await GetJsonOrDefault<BuildSceneMeta>($"/api/builds/{BuildId}/scene");
+        _sceneMetaBuildId = BuildId;
+        _sceneMetaEngineFamilyId = meta?.EngineFamilyId;
+        _engineSceneUri = meta?.EngineGltfUri;
+        return _engineSceneUri;
+    }
+
+    async Task EnsureEngineSceneAsync()
+    {
+        if (_disposed)
+        {
+            return;
+        }
+
+        if (!BuildId.HasValue)
+        {
+            _engineSceneHydrated = false;
+            return;
+        }
+
+        try
+        {
+            var module = _engineModule;
+            if (module is null)
+            {
+                module = await JS.InvokeAsync<IJSObjectReference>("import", "/js/engine3d.js");
+                _engineModule = module;
+            }
+
+            if (module is null)
+            {
+                _engineSceneHydrated = false;
+                return;
+            }
+
+            if (_hasDebugQuery)
+            {
+                await module.InvokeVoidAsync("setDebugMode", _viewerDebug);
+            }
+
+            var glbPath = await EnsureSceneGltfUriAsync();
+            var resolvedGlb = !string.IsNullOrWhiteSpace(glbPath)
+                ? glbPath!
+                : "/assets/engine/engine-a.glb";
+            var glbChanged = !string.Equals(_lastMountedGlbPath, resolvedGlb, System.StringComparison.OrdinalIgnoreCase);
+
+            if (_viewerDebug)
+            {
+                Console.WriteLine($"[Builder] Build {BuildId}: using GLB '{resolvedGlb}' (changed={glbChanged})");
+            }
+            if (_engineSceneReady && _engineSceneBuildId == BuildId && !glbChanged)
+            {
+                await module.InvokeVoidAsync("setBuildContext", BuildId);
+                if (!_engineSceneHydrated)
+                {
+                    await module.InvokeVoidAsync("hydrateFromServer");
+                    _engineSceneHydrated = true;
+                }
+                return;
+            }
+
+            if (_engineSceneReady && (_engineSceneBuildId != BuildId || glbChanged))
+            {
+                await DisposeEngineSceneAsync();
+                _engineSceneHydrated = false;
+            }
+
+            await module.InvokeVoidAsync(
+                "mountEngineScene",
+                "#engine3d",
+                new
+                {
+                    glbPath = resolvedGlb,
+                    buildId = BuildId,
+                    debug = _hasDebugQuery ? _viewerDebug : (bool?)null
+                });
+            await module.InvokeVoidAsync("setBuildContext", BuildId);
+            await module.InvokeVoidAsync("hydrateFromServer");
+            _engineSceneReady = true;
+            _engineSceneBuildId = BuildId;
+            _lastMountedGlbPath = resolvedGlb;
+            _engineSceneHydrated = true;
+        }
+        catch (ObjectDisposedException)
+        {
+            _engineModule = null;
+            _engineSceneReady = false;
+            _engineSceneBuildId = null;
+            _lastMountedGlbPath = null;
+            _engineSceneHydrated = false;
+        }
+        catch (JSDisconnectedException)
+        {
+            // Blazor circuit ended before the viewer finished booting.
+        }
+        catch (JSException ex)
+        {
+            Console.Error.WriteLine($"Engine viewer init failed: {ex.Message}");
+            _engineSceneHydrated = false;
+        }
+    }
+
+    async Task DisposeEngineSceneAsync()
+    {
+        var module = _engineModule;
+        if (!_engineSceneReady || module is null)
+        {
+            _engineSceneReady = false;
+            _engineSceneBuildId = null;
+            _lastMountedGlbPath = null;
+            _engineSceneHydrated = false;
+            return;
+        }
+
+        try
+        {
+            await module.InvokeVoidAsync("setBuildContext", 0);
+            await module.InvokeVoidAsync("disposeEngineScene", "#engine3d");
+        }
+        catch (JSDisconnectedException)
+        {
+            // Circuit already disposed.
+        }
+        catch (JSException ex)
+        {
+            Console.Error.WriteLine($"Engine viewer dispose failed: {ex.Message}");
+        }
+        finally
+        {
+            _engineSceneReady = false;
+            _engineSceneBuildId = null;
+            _lastMountedGlbPath = null;
+            _engineSceneHydrated = false;
+        }
+    }
+
+    public void Dispose()
+    {
+        if (_disposed)
+        {
+            return;
+        }
+
+        _disposed = true;
+        Session.Changed -= OnSessionChanged;
+        _dotNetRef?.Dispose();
+        _dotNetRef = null;
+        _dotnetRefRegistered = false;
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        Dispose();
+
+        if (_engineModule is null)
+        {
+            return;
+        }
+
+        try
+        {
+            await _engineModule.InvokeVoidAsync("setDotNetRef", (object?)null);
+            await DisposeEngineSceneAsync();
+            await _engineModule.DisposeAsync();
+        }
+        catch (JSDisconnectedException)
+        {
+            // Circuit already disposed.
+        }
+        finally
+        {
+            _engineModule = null;
+        }
+    }
+
+    [JSInvokable]
+    public Task OnBadgeState(BadgeState? payload)
+    {
+        if (_disposed)
+        {
+            return Task.CompletedTask;
+        }
+
+        return InvokeAsync(() =>
+        {
+            if (_disposed)
+            {
+                return;
+            }
+
+            try
+            {
+                var data = payload ?? new BadgeState();
+                BadgeCompletionPct = data.CompletionPct;
+
+                SlotBadges.Clear();
+                if (data.Slots is not null && data.Slots.Count > 0)
+                {
+                    SlotBadges.AddRange(data.Slots);
+                }
+
+                SubsystemBadges.Clear();
+                if (data.Subsystems is not null && data.Subsystems.Count > 0)
+                {
+                    SubsystemBadges.AddRange(data.Subsystems);
+                }
+
+                LatestBadgeHints = data.Hints ?? new BadgeHints();
+
+                var issueBuffer = new List<IssueVM>(16);
+
+                if (LatestBadgeHints.Requires is { Count: > 0 })
+                {
+                    issueBuffer.AddRange(LatestBadgeHints.Requires
+                        .Select(socket => new IssueVM("Missing part", NormalizeSocket(socket))));
+                }
+
+                if (LatestBadgeHints.MatchAttr is { Count: > 0 })
+                {
+                    issueBuffer.AddRange(LatestBadgeHints.MatchAttr
+                        .Select(socket => new IssueVM("Attribute mismatch", NormalizeSocket(socket))));
+                }
+
+                if (LatestBadgeHints.Excludes is { Count: > 0 })
+                {
+                    issueBuffer.AddRange(LatestBadgeHints.Excludes
+                        .Select(socket => new IssueVM("Incompatible parts", NormalizeSocket(socket))));
+                }
+
+                var orderedIssues = issueBuffer
+                    .GroupBy(issue => (issue.Type, issue.SocketKey), ValueTupleComparer.Instance)
+                    .Select(g => g.First())
+                    .OrderBy(i => i.Type, StringComparer.OrdinalIgnoreCase)
+                    .ThenBy(i => i.SocketKey, StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+
+                Issues.Clear();
+                Issues.AddRange(orderedIssues);
+
+                StateHasChanged();
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"OnBadgeState failed: {ex.Message}\n{ex}");
+            }
+        });
+    }
+
+    [JSInvokable]
+    public Task FocusCategoryForSocket(string socketKey)
+    {
+        return InvokeAsync(async () =>
+        {
+            if (BuildId is null || string.IsNullOrWhiteSpace(socketKey))
+            {
+                return;
+            }
+
+            JsonElement row;
+            try
+            {
+                row = await Http.GetFromJsonAsync<JsonElement>($"/api/builds/{BuildId}/socket-to-category?socketKey={Uri.EscapeDataString(socketKey)}");
+            }
+            catch (HttpRequestException ex) when (HandleUnauthorized(ex, "Sign in to access this build."))
+            {
+                return;
+            }
+            catch
+            {
+                return;
+            }
+
+            if (row.ValueKind != JsonValueKind.Object)
+            {
+                return;
+            }
+
+            if (row.TryGetProperty("CategoryId", out var cidNode) && cidNode.ValueKind == JsonValueKind.Number)
+            {
+                var categoryId = cidNode.GetInt64();
+                FocusedCategoryId = categoryId;
+                await EnsureOptions(categoryId);
+                StateHasChanged();
+            }
+        });
+    }
+
+    [JSInvokable]
+    public Task OnSocketSelectionChanged()
+    {
+        return InvokeAsync(async () =>
+        {
+            if (BuildId.HasValue)
+            {
+                await RefreshAll();
+            }
+        });
+    }
+
+    string GetSlotBadge(SlotVM slot) => slot.LocalOk ? "✅" : "🔴";
+
+    string GetSlotDisplayName(SlotVM slot)
+        => !string.IsNullOrWhiteSpace(slot.SlotName) ? slot.SlotName! : slot.SlotKey;
+
+    string GetSubsystemBadge(SubsystemVM subsystem)
+        => string.IsNullOrWhiteSpace(subsystem.Badge)
+            ? (subsystem.OkSlots >= subsystem.TotalSlots && subsystem.TotalSlots > 0 ? "✅" : "🔴")
+            : subsystem.Badge!;
+
+    string GetSubsystemDisplayName(SubsystemVM subsystem)
+        => !string.IsNullOrWhiteSpace(subsystem.SubsystemName)
+            ? subsystem.SubsystemName!
+            : (!string.IsNullOrWhiteSpace(subsystem.SubsystemKey)
+                ? subsystem.SubsystemKey!
+                : $"Subsystem {subsystem.SubsystemId}");
+
+    void ToggleIssues() => ShowIssues = !ShowIssues;
+
+    static string NormalizeSocket(string? socketKey)
+        => string.IsNullOrWhiteSpace(socketKey) ? string.Empty : socketKey.Trim();
+
+    string FormatSocketKey(string socketKey)
+    {
+        var normalized = NormalizeSocket(socketKey);
+        if (normalized.StartsWith("Socket_", StringComparison.OrdinalIgnoreCase))
+        {
+            normalized = normalized.Substring("Socket_".Length);
+        }
+
+        return string.IsNullOrWhiteSpace(normalized)
+            ? "(unknown socket)"
+            : normalized.Replace('_', ' ');
+    }
+
+    public sealed class BadgeState
+    {
+        [JsonPropertyName("completion_pct")]
+        public double CompletionPct { get; set; }
+
+        [JsonPropertyName("slots")]
+        public List<SlotVM> Slots { get; set; } = new();
+
+        [JsonPropertyName("subsystems")]
+        public List<SubsystemVM> Subsystems { get; set; } = new();
+
+        [JsonPropertyName("hints")]
+        public BadgeHints? Hints { get; set; }
+    }
+
+    public sealed class SlotVM
+    {
+        [JsonPropertyName("slot_id")]
+        public long SlotId { get; set; }
+
+        [JsonPropertyName("slot_key")]
+        public string SlotKey { get; set; } = string.Empty;
+
+        [JsonPropertyName("slot_name")]
+        public string? SlotName { get; set; }
+
+        [JsonPropertyName("gltf_node_path")]
+        public string? GltfNodePath { get; set; }
+
+        [JsonPropertyName("subsystem_id")]
+        public long? SubsystemId { get; set; }
+
+        [JsonPropertyName("subsystem_key")]
+        public string? SubsystemKey { get; set; }
+
+        [JsonPropertyName("subsystem_name")]
+        public string? SubsystemName { get; set; }
+
+        [JsonPropertyName("selected_count")]
+        public int SelectedCount { get; set; }
+
+        [JsonPropertyName("min_required")]
+        public int MinRequired { get; set; }
+
+        [JsonPropertyName("capacity")]
+        public int Capacity { get; set; }
+
+        [JsonPropertyName("local_ok")]
+        public bool LocalOk { get; set; }
+
+        [JsonPropertyName("part_id")]
+        public long? PartId { get; set; }
+
+        [JsonPropertyName("part_name")]
+        public string? PartName { get; set; }
+
+        [JsonPropertyName("gltf_uri")]
+        public string? GltfUri { get; set; }
+
+        [JsonPropertyName("gltf_attach_node")]
+        public string? GltfAttachNode { get; set; }
+    }
+
+    public sealed class SubsystemVM
+    {
+        [JsonPropertyName("subsystem_id")]
+        public long SubsystemId { get; set; }
+
+        [JsonPropertyName("subsystem_key")]
+        public string? SubsystemKey { get; set; }
+
+        [JsonPropertyName("subsystem_name")]
+        public string? SubsystemName { get; set; }
+
+        [JsonPropertyName("ok_slots")]
+        public int OkSlots { get; set; }
+
+        [JsonPropertyName("total_slots")]
+        public int TotalSlots { get; set; }
+
+        [JsonPropertyName("badge")]
+        public string? Badge { get; set; }
+    }
+
+    public sealed record IssueVM(string Type, string SocketKey);
+
+    public sealed class BadgeHints
+    {
+        [JsonPropertyName("requires")]
+        public List<string> Requires { get; set; } = new();
+
+        [JsonPropertyName("match_attr")]
+        public List<string> MatchAttr { get; set; } = new();
+
+        [JsonPropertyName("excludes")]
+        public List<string> Excludes { get; set; } = new();
+
+        public bool HasIssues =>
+            (Requires?.Count ?? 0) + (MatchAttr?.Count ?? 0) + (Excludes?.Count ?? 0) > 0;
+    }
+
+    sealed class ValueTupleComparer : IEqualityComparer<(string Type, string SocketKey)>
+    {
+        public static readonly ValueTupleComparer Instance = new();
+
+        public bool Equals((string Type, string SocketKey) x, (string Type, string SocketKey) y) =>
+            StringComparer.OrdinalIgnoreCase.Equals(x.Type, y.Type) &&
+            StringComparer.OrdinalIgnoreCase.Equals(x.SocketKey, y.SocketKey);
+
+        public int GetHashCode((string Type, string SocketKey) obj) =>
+            HashCode.Combine(
+                StringComparer.OrdinalIgnoreCase.GetHashCode(obj.Type ?? string.Empty),
+                StringComparer.OrdinalIgnoreCase.GetHashCode(obj.SocketKey ?? string.Empty));
+    }
+
+
+    static string FormatStatusBadgeTw(string? status) => status switch
+    {
+        "complete"           => "inline-flex items-center rounded-md bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-800",
+        "incomplete"         => "inline-flex items-center rounded-md bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800",
+        "needs_formula_eval" => "inline-flex items-center rounded-md bg-sky-100 px-2 py-0.5 text-xs font-medium text-sky-800",
+        _                    => "inline-flex items-center rounded-md bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-700"
+    };
+}

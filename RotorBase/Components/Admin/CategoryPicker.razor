@@ -1,0 +1,116 @@
+@inject HttpClient Http
+
+<div class="input-group">
+    <input class="form-control" placeholder="Search leaf categories…" value="@_query" @oninput="OnQueryChanged" />
+    <button class="btn btn-outline-secondary" type="button" @onclick="SearchAsync">Search</button>
+</div>
+
+@if (!string.IsNullOrEmpty(_error))
+{
+    <div class="text-danger small mt-1">@_error</div>
+}
+
+@if (_results.Count > 0)
+{
+    <div class="list-group mt-2" style="max-height: 220px; overflow-y: auto;">
+        @foreach (var option in _results)
+        {
+            <button type="button" class="list-group-item list-group-item-action"
+                    @onclick="() => AddAsync(option)">
+                <div class="fw-semibold">@option.Name</div>
+                <div class="text-muted small">@option.Slug</div>
+            </button>
+        }
+    </div>
+}
+else if (_query.Length >= 2 && string.IsNullOrEmpty(_error))
+{
+    <div class="text-muted small mt-2">No categories matched.</div>
+}
+
+@if (Categories?.Count > 0)
+{
+    <div class="mt-2">
+        @for (var i = 0; i < Categories!.Count; i++)
+        {
+            var slug = Categories[i];
+            <span class="badge bg-light text-dark me-1 mb-1">
+                <span class="fw-semibold">@slug</span>
+                @if (i == 0)
+                {
+                    <span class="text-primary"> (primary)</span>
+                }
+                <button class="btn-close btn-close-white ms-1" style="font-size: .65rem" type="button" @onclick="() => RemoveAsync(slug)"></button>
+            </span>
+        }
+    </div>
+}
+
+@code {
+    private string _query = string.Empty;
+    private readonly List<CategoryResult> _results = new();
+    private string? _error;
+
+    [Parameter] public List<string> Categories { get; set; } = new();
+    [Parameter] public EventCallback<List<string>> CategoriesChanged { get; set; }
+
+    private record CategoryResult(long CategoryId, string Name, string Slug);
+
+    private async Task OnQueryChanged(ChangeEventArgs args)
+    {
+        _query = args.Value?.ToString() ?? string.Empty;
+        if (_query.Length >= 2)
+        {
+            await SearchAsync();
+        }
+        else
+        {
+            _results.Clear();
+        }
+    }
+
+    private async Task SearchAsync()
+    {
+        if (_query.Length < 2)
+        {
+            _results.Clear();
+            return;
+        }
+
+        try
+        {
+            _error = null;
+            var url = $"/api/admin/categories/leaf?q={Uri.EscapeDataString(_query)}";
+            var matches = await Http.GetFromJsonAsync<List<CategoryResult>>(url) ?? new();
+            _results.Clear();
+            _results.AddRange(matches);
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+    }
+
+    private async Task AddAsync(CategoryResult option)
+    {
+        var updated = Categories?.ToList() ?? new List<string>();
+        updated.RemoveAll(slug => string.Equals(slug, option.Slug, StringComparison.OrdinalIgnoreCase));
+        updated.Insert(0, option.Slug);
+        Categories = updated;
+        if (CategoriesChanged.HasDelegate)
+        {
+            await CategoriesChanged.InvokeAsync(updated);
+        }
+    }
+
+    private async Task RemoveAsync(string slug)
+    {
+        var updated = Categories?.ToList() ?? new List<string>();
+        updated.RemoveAll(item => string.Equals(item, slug, StringComparison.OrdinalIgnoreCase));
+        Categories = updated;
+        if (CategoriesChanged.HasDelegate)
+        {
+            await CategoriesChanged.InvokeAsync(updated);
+        }
+    }
+}

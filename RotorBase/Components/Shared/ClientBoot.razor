@@ -1,0 +1,44 @@
+@inject ThemeService Theme
+@inject UserSession Session
+@inject CompareTrayService Compare
+
+@code {
+    private bool _initialized;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (_initialized)
+        {
+            return;
+        }
+
+        if (!await TryApplyThemeAsync())
+        {
+            // Schedule another attempt once the JS runtime is ready.
+            await Task.Delay(50);
+            await InvokeAsync(StateHasChanged);
+            return;
+        }
+
+        Session.MarkClientReady();
+        Compare.MarkClientReady();
+
+        try { await Session.HydrateAsync(); } catch { }
+        try { await Compare.InitializeAsync(); } catch { }
+
+        _initialized = true;
+    }
+
+    private async Task<bool> TryApplyThemeAsync()
+    {
+        try
+        {
+            await Theme.ApplyAsync();
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+}

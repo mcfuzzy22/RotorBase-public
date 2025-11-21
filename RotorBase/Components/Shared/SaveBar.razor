@@ -1,0 +1,77 @@
+@namespace RotorBase.Components.Shared
+@inject NavigationManager Nav
+
+<div class="sticky top-0 z-40 backdrop-blur bg-surface/80 ring-1 ring-border/60">
+  <div class="container py-2 flex flex-wrap items-center gap-3">
+    <!-- Name input -->
+    <input
+      class="input h-9 w-full sm:w-[22rem] md:w-72"
+      value="@BuildName"
+      @oninput="OnInputChanged"
+      placeholder="Build name"
+      aria-label="Build name" />
+
+    @if (Draft)
+    {
+      <span class="badge bg-warning/15 text-warning ring-warning/20">Unsaved build</span>
+    }
+
+    <div class="flex-1"></div>
+
+    @if (!IsSignedIn)
+    {
+      <button class="btn btn-primary h-9 px-3"
+              @onclick="OpenAuth">
+        Sign in to Save
+      </button>
+    }
+    else
+    {
+      <button class="btn btn-primary h-9 px-3"
+              @onclick="SaveClicked">
+        @(Draft ? "Save Build" : "Save")
+      </button>
+
+      <button class="btn btn-ghost h-9 px-3"
+              @onclick="SaveAsClicked">
+        Save As…
+      </button>
+    }
+  </div>
+</div>
+
+@code {
+    [Parameter] public bool Draft { get; set; }
+    [Parameter] public bool IsSignedIn { get; set; }
+    [Parameter] public string BuildName { get; set; } = "Untitled Build";
+    [Parameter] public EventCallback<string> OnNameChange { get; set; }
+    [Parameter] public EventCallback OnSave { get; set; }
+    [Parameter] public EventCallback OnSaveAs { get; set; }
+
+    private Task OnInputChanged(ChangeEventArgs e)
+      => OnNameChange.InvokeAsync(e.Value?.ToString() ?? string.Empty);
+
+    private Task SaveClicked() => OnSave.InvokeAsync();
+    private Task SaveAsClicked() => OnSaveAs.InvokeAsync();
+
+    private void OpenAuth()
+    {
+        var uri = new Uri(Nav.Uri);
+        var baseUri = uri.GetLeftPart(UriPartial.Path);
+        var query = Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(uri.Query);
+
+        var map = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
+        foreach (var kvp in query)
+            map[kvp.Key] = kvp.Value.Count > 0 ? kvp.Value[^1] : null;
+
+        if (map.TryGetValue("auth", out var existing) && string.Equals(existing, "1", StringComparison.OrdinalIgnoreCase))
+        {
+            Nav.NavigateTo(Nav.Uri, forceLoad: false);
+            return;
+        }
+
+        map["auth"] = "1";
+        var target = Microsoft.AspNetCore.WebUtilities.QueryHelpers.AddQueryString(baseUri, map);
+        Nav.NavigateTo(target, forceLoad: false);
+    }
+}

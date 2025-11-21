@@ -1,0 +1,232 @@
+@rendermode InteractiveServer
+@inject UserSession Session
+@inject HttpClient Http
+@using System.Net
+@using System.Text.Json
+@using System.Text.Json.Serialization
+@implements IDisposable
+
+<div class="flex flex-col gap-4 text-sm text-foreground/80">
+    @if (Session.IsSignedIn)
+    {
+        <div class="flex items-center justify-between gap-3">
+            <span class="truncate text-foreground">@FormatUser(Session)</span>
+            <button type="button"
+                    class="btn btn-ghost"
+                    @onclick="SignOut"
+                    disabled="@_busy">
+                Sign out
+            </button>
+        </div>
+    }
+    else
+    {
+        <div class="flex items-center justify-between gap-3">
+            <span class="text-foreground/70">Ready to build?</span>
+            <button type="button"
+                    class="btn btn-primary"
+                    @onclick="ToggleSignup"
+                    disabled="@_busy">
+                @(_showAuth ? "Cancel" : "Sign in or create account")
+            </button>
+        </div>
+        @if (_showAuth)
+        {
+            <div class="card space-y-4 bg-surface/80 p-4 shadow-sm ring-1 ring-border/60">
+                <div>
+                    <label class="label uppercase tracking-wide text-xs text-foreground/60">Email</label>
+                    <input class="input"
+                           type="email"
+                           @bind="_loginEmail"
+                           autocomplete="email" />
+                </div>
+                <div>
+                    <label class="label uppercase tracking-wide text-xs text-foreground/60">Password</label>
+                    <input class="input"
+                           type="password"
+                           @bind="_loginPassword"
+                           autocomplete="current-password" />
+                </div>
+                <div class="flex flex-wrap gap-2">
+                    <button type="button"
+                            class="btn btn-primary"
+                            @onclick="SignIn"
+                            disabled="@(_busy || string.IsNullOrWhiteSpace(_loginEmail) || string.IsNullOrWhiteSpace(_loginPassword))">
+                        Sign in
+                    </button>
+                    <button type="button"
+                            class="btn btn-soft"
+                            @onclick="CreateAccount"
+                            disabled="@(_busy || HasEmptySignupFields())">
+                        Create account
+                    </button>
+                </div>
+                <div>
+                    <label class="label uppercase tracking-wide text-xs text-foreground/60">Display name (optional)</label>
+                    <input class="input"
+                           type="text"
+                           @bind="_signupDisplayName"
+                           autocomplete="name" />
+                </div>
+                <div class="flex items-start gap-2">
+                    <input class="mt-1 h-4 w-4 rounded border-border/60 text-primary focus:ring-primary/60 focus:ring-offset-0"
+                           type="checkbox"
+                           id="newsletter-opt-in"
+                           @bind="_signupOptIn" />
+                    <label class="text-xs text-foreground/60" for="newsletter-opt-in">Send me build guides and price alerts</label>
+                </div>
+                @if (!string.IsNullOrWhiteSpace(_error))
+                {
+                    <div class="text-sm text-danger">@_error</div>
+                }
+            </div>
+        }
+    }
+</div>
+
+@code {
+    [Parameter] public bool OpenOnMount { get; set; }
+
+    private string? _loginEmail;
+    private string? _loginPassword;
+    private string? _signupDisplayName;
+    private bool _signupOptIn = true;
+    private string? _error;
+    private bool _showAuth;
+    private bool _busy;
+
+    protected override void OnInitialized()
+    {
+        Session.Changed += OnSessionChanged;
+    }
+
+    protected override void OnParametersSet()
+    {
+        if (!_showAuth && OpenOnMount && !Session.IsSignedIn)
+            _showAuth = true;
+    }
+
+    private async Task SignIn()
+    {
+        if (_busy) return;
+        _busy = true;
+        _error = null;
+        try
+        {
+            var ok = await Session.SignInAsync(_loginEmail?.Trim() ?? string.Empty, _loginPassword ?? string.Empty);
+            if (!ok)
+            {
+                _error = "Sign-in failed. Check your credentials.";
+            }
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _loginPassword = string.Empty;
+            _busy = false;
+        }
+    }
+
+    private async Task SignOut()
+    {
+        if (_busy) return;
+        _busy = true;
+        _error = null;
+        try
+        {
+            await Session.SignOutAsync();
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private void ToggleSignup()
+    {
+        _showAuth = !_showAuth;
+        _error = null;
+    }
+
+    private async Task CreateAccount()
+    {
+        if (_busy) return;
+        _busy = true;
+        _error = null;
+        try
+        {
+            var payload = new
+            {
+                email = _loginEmail?.Trim(),
+                display_name = string.IsNullOrWhiteSpace(_signupDisplayName) ? null : _signupDisplayName.Trim(),
+                password = _loginPassword,
+                email_opt_in = _signupOptIn
+            };
+
+            var resp = await Http.PostAsJsonAsync("/api/users", payload);
+            if (resp.IsSuccessStatusCode)
+            {
+                _showAuth = false;
+                _busy = false;
+                await SignIn();
+                return;
+            }
+            else if (resp.StatusCode == HttpStatusCode.Conflict)
+            {
+                _error = "An account with that email already exists.";
+            }
+            else
+            {
+                var content = await resp.Content.ReadAsStringAsync();
+                ApiError? apiError = null;
+                try
+                {
+                    apiError = JsonSerializer.Deserialize<ApiError>(content, new JsonSerializerOptions
+                    {
+                        PropertyNameCaseInsensitive = true
+                    });
+                }
+                catch
+                {
+                    // ignore parse errors
+                }
+
+                _error = apiError?.Error switch
+                {
+                    "email_send_failed" => "We couldn’t send the verification email. Check that the address is allowed or try again later.",
+                    _ => $"Signup failed: {(int)resp.StatusCode} {resp.ReasonPhrase}. {content}"
+                };
+            }
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private bool HasEmptySignupFields()
+        => string.IsNullOrWhiteSpace(_loginEmail) || string.IsNullOrWhiteSpace(_loginPassword);
+
+    private static string FormatUser(UserSession session)
+        => session.DisplayName ?? session.Email ?? "Signed in";
+
+    private void OnSessionChanged()
+        => InvokeAsync(StateHasChanged);
+
+    private sealed class ApiError
+    {
+        [JsonPropertyName("error")] public string? Error { get; set; }
+    }
+
+    public void Dispose()
+    {
+        Session.Changed -= OnSessionChanged;
+    }
+}

@@ -1,0 +1,1109 @@
+@page "/admin/categories"
+@rendermode InteractiveServer
+@using System.Net.Http.Json
+@using System.Text.Json.Serialization
+@using System.Text.Json
+@using System.Linq
+@inject HttpClient Http
+@inject UserSession Session
+
+<h1 class="mb-3 text-2xl font-semibold">Admin · Categories</h1>
+
+@if (!Session.IsSignedIn)
+{
+    <div class="rounded-md border border-sky-200 bg-sky-50 px-4 py-2 text-sm text-sky-800" role="alert">
+        Sign in to view admin tools.
+    </div>
+}
+else if (!Session.IsAdmin)
+{
+    <div class="rounded-md border border-amber-200 bg-amber-50 px-4 py-2 text-sm text-amber-800" role="alert">
+        You need admin access to manage categories.
+    </div>
+}
+else if (_loading)
+{
+    <div class="flex items-center gap-2 text-gray-700">
+        <div class="h-4 w-4 animate-spin rounded-full border-2 border-indigo-600 border-t-transparent" aria-hidden="true"></div>
+        <span class="text-sm">Loading categories…</span>
+    </div>
+}
+else
+{
+    @if (!string.IsNullOrWhiteSpace(_alert))
+    {
+        <div class="mb-3 rounded-md border border-amber-200 bg-amber-50 px-4 py-2 text-sm text-amber-800" role="alert">@_alert</div>
+    }
+
+    <!-- Filters card -->
+    <div class="mb-3 rounded-xl border border-gray-200 bg-white shadow-sm">
+        <div class="flex flex-wrap items-end gap-3 p-3">
+            <div class="min-w-[260px] grow">
+                <label class="mb-1 block text-sm font-medium text-gray-700">Search</label>
+                <input class="block w-full rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-800 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                       placeholder="Brake" value="@_search" @oninput="OnSearchChanged" />
+            </div>
+            <div class="flex items-center gap-2">
+                <input id="leafOnly"
+                       class="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-600"
+                       type="checkbox" checked="@_leafOnly" @onchange="OnLeafOnlyChanged" />
+                <label class="text-sm text-gray-700" for="leafOnly">Leaf only</label>
+            </div>
+            <div class="ms-auto flex gap-2">
+                <button class="inline-flex items-center rounded-md border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+                        @onclick="LoadAsync">
+                    Refresh
+                </button>
+                <button class="inline-flex items-center rounded-md bg-indigo-600 px-3 py-2 text-sm font-medium text-white hover:bg-indigo-700"
+                        @onclick="NewCategoryAsync">
+                    New Category
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Categories table -->
+    <div class="overflow-x-auto rounded-xl border border-gray-200 bg-white shadow-sm">
+        <table class="min-w-full text-left text-sm">
+            <thead class="bg-gray-50 text-xs uppercase text-gray-500">
+                <tr>
+                    <th class="w-[20%] px-3 py-2">Name</th>
+                    <th class="w-[18%] px-3 py-2">Slug</th>
+                    <th class="w-[8%] px-3 py-2">Leaf</th>
+                    <th class="px-3 py-2">Description</th>
+                    <th class="w-[18%] px-3 py-2 text-right"></th>
+                </tr>
+            </thead>
+            <tbody class="divide-y divide-gray-100">
+                @foreach (var cat in _categories)
+                {
+                    <tr>
+                        <td class="px-3 py-2">
+                            <input class="w-full rounded-md border border-gray-300 px-2 py-1 text-sm text-gray-800 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                                   @bind="cat.Name" />
+                        </td>
+                        <td class="px-3 py-2">
+                            <input class="w-full rounded-md border border-gray-300 px-2 py-1 text-sm text-gray-800 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                                   @bind="cat.Slug" />
+                        </td>
+                        <td class="px-3 py-2 text-center">
+                            <input class="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-600"
+                                   type="checkbox" @bind="cat.IsSelectable" />
+                        </td>
+                        <td class="px-3 py-2">
+                            <input class="w-full rounded-md border border-gray-300 px-2 py-1 text-sm text-gray-800 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                                   @bind="cat.Description" />
+                        </td>
+                        <td class="px-3 py-2">
+                            <div class="flex justify-end gap-2">
+                                <button class="inline-flex items-center rounded-md bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-700 disabled:opacity-60"
+                                        @onclick="() => SaveAsync(cat)" disabled="@cat.Saving">
+                                    @(cat.Saving ? "Saving…" : "Save")
+                                </button>
+                                <button class="inline-flex items-center rounded-md border border-sky-300 px-3 py-1.5 text-xs font-medium text-sky-700 hover:bg-sky-50 disabled:opacity-60"
+                                        title="Requirements" @onclick="async () => await OpenReqModalAsync(cat)" disabled="@(!cat.IsSelectable || cat.Saving)">
+                                    Reqs
+                                </button>
+                                <button class="inline-flex items-center rounded-md border border-indigo-300 px-3 py-1.5 text-xs font-medium text-indigo-700 hover:bg-indigo-50 disabled:opacity-60"
+                                        @onclick="() => OpenPlaceModal(cat)" disabled="@cat.Saving">
+                                    Place
+                                </button>
+                                <button class="inline-flex items-center rounded-md border border-red-300 px-3 py-1.5 text-xs font-medium text-red-700 hover:bg-red-50 disabled:opacity-60"
+                                        @onclick="() => DeleteAsync(cat)" disabled="@cat.Saving">
+                                    Delete
+                                </button>
+                            </div>
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+}
+
+<!-- Place Modal -->
+@if (_showPlaceModal && _target is not null)
+{
+    <div class="fixed inset-0 z-40 bg-black/40"></div>
+    <div class="fixed inset-0 z-50 flex items-center justify-center p-4">
+        <div class="w-full max-w-md rounded-lg bg-white shadow-xl">
+            <div class="flex items-center justify-between border-b border-gray-100 p-3">
+                <h5 class="text-base font-semibold">Place "@_target?.Name" in tree</h5>
+                <button type="button" class="h-8 w-8 rounded-md text-gray-500 hover:bg-gray-100"
+                        aria-label="Close" @onclick="ClosePlaceModal" disabled="@_placing">&times;</button>
+            </div>
+            <div class="p-4">
+                <div class="mb-3">
+                    <label class="mb-1 block text-sm font-medium text-gray-700">Tree</label>
+                    <select class="block w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-800 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                            @bind="_selectedTreeId">
+                        @foreach (var tree in _trees)
+                        {
+                            <option value="@tree.TreeId">@tree.Name</option>
+                        }
+                    </select>
+                </div>
+                <div class="mb-3">
+                    <label class="mb-1 block text-sm font-medium text-gray-700">Parent slug</label>
+                    <input class="block w-full rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-800 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                           placeholder="engine-internals" @bind="_parentSlug" />
+                    <div class="mt-1 text-xs text-gray-500">Enter the slug of the parent category.</div>
+                </div>
+                @if (!string.IsNullOrWhiteSpace(_placeError))
+                {
+                    <div class="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700" role="alert">@_placeError</div>
+                }
+            </div>
+            <div class="flex justify-end gap-2 border-t border-gray-100 p-3">
+                <button class="rounded-md border border-gray-300 px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50"
+                        @onclick="ClosePlaceModal" disabled="@_placing">Cancel</button>
+                <button class="rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-60"
+                        @onclick="PlaceAsync" disabled="@_placing">
+                    @(_placing ? "Placing…" : "Place")
+                </button>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    class CategoryRow
+    {
+        [JsonPropertyName("category_id")] public long CategoryId { get; set; }
+        [JsonPropertyName("name")] public string Name { get; set; } = string.Empty;
+        [JsonPropertyName("slug")] public string? Slug { get; set; }
+        [JsonPropertyName("is_selectable")] public bool IsSelectable { get; set; }
+        [JsonPropertyName("description")] public string? Description { get; set; }
+        [JsonIgnore] public bool Saving { get; set; }
+    }
+
+    class TreeRow
+    {
+        [JsonPropertyName("tree_id")] public long TreeId { get; set; }
+        [JsonPropertyName("name")] public string Name { get; set; } = string.Empty;
+    }
+
+    class EngineFamilyRow
+    {
+        [JsonPropertyName("engine_family_id")] public long EngineFamilyId { get; set; }
+        [JsonPropertyName("code")] public string Code { get; set; } = string.Empty;
+        [JsonPropertyName("rotor_count")] public int? RotorCount { get; set; }
+    }
+
+    class RequirementRow
+    {
+        [JsonPropertyName("engine_family_id")] public long EngineFamilyId { get; set; }
+        [JsonPropertyName("code")] public string EngineCode { get; set; } = string.Empty;
+        [JsonPropertyName("req_mode")] public string? ReqMode { get; set; }
+        [JsonPropertyName("requirement_type")] public string? RequirementType { get; set; }
+        [JsonPropertyName("required_qty")] public decimal? RequiredQty { get; set; }
+        [JsonPropertyName("multiplier")] public decimal? Multiplier { get; set; }
+        [JsonPropertyName("operand_field")] public string? OperandField { get; set; }
+        [JsonPropertyName("round_mode")] public string? RoundMode { get; set; }
+    }
+
+    List<CategoryRow> _categories = new();
+    List<TreeRow> _trees = new();
+    bool _loading = true;
+    string? _alert;
+    string _search = string.Empty;
+    bool _leafOnly;
+
+    CategoryRow? _target;
+    bool _showPlaceModal;
+    bool _placing;
+    string? _parentSlug;
+    long? _selectedTreeId;
+    string? _placeError;
+
+    bool _showRequirementModal;
+    bool _savingRequirement;
+    string? _reqError;
+    long? _reqTreeId;
+    List<EngineFamilyRow> _engineFamilies = new();
+    List<RequirementRow> _requirements = new();
+    string _engineSearch = string.Empty;
+    long _selectedEngineId;
+    string _reqMode = "exact_count";
+    decimal? _requiredQty;
+    decimal? _multiplier;
+    string _operandField = "rotor_count";
+    string _roundMode = "none";
+
+    bool _showBulkModal;
+    bool _savingBulk;
+    string? _bulkError;
+    string _bulkCodes = string.Empty;
+    bool _bulkOverwrite = true;
+    string _bulkMode = "structured";
+    decimal? _bulkRequiredQty;
+    decimal? _bulkMultiplier;
+    string _bulkOperand = "rotor_count";
+    string _bulkRound = "none";
+
+    protected override async Task OnInitializedAsync()
+    {
+        await Session.HydrateAsync();
+        if (!Session.IsAdmin)
+        {
+            _loading = false;
+            return;
+        }
+
+        await LoadTreesAsync();
+        await LoadAsync();
+        _loading = false;
+    }
+
+    async Task LoadTreesAsync()
+    {
+        try
+        {
+            _trees = await Http.GetFromJsonAsync<List<TreeRow>>("/api/admin/trees") ?? new();
+            if (_selectedTreeId is null && _trees.Count > 0)
+            {
+                _selectedTreeId = _trees[0].TreeId;
+            }
+        }
+        catch (Exception ex)
+        {
+            _alert = $"Failed to load trees: {ex.Message}";
+        }
+    }
+
+    async Task LoadAsync()
+    {
+        if (!Session.IsAdmin) return;
+        try
+        {
+            var leaf = _leafOnly ? "true" : "false";
+            var url = $"/api/admin/categories?leafOnly={leaf}";
+            if (!string.IsNullOrWhiteSpace(_search))
+            {
+                url += $"&q={Uri.EscapeDataString(_search)}";
+            }
+
+            using var response = await Http.GetAsync(url);
+            if (!response.IsSuccessStatusCode)
+            {
+                var detail = await response.Content.ReadAsStringAsync();
+                _alert = ParseError(detail, $"Fetch failed: {(int)response.StatusCode} {response.ReasonPhrase}");
+                _categories.Clear();
+                return;
+            }
+
+            _categories = await response.Content.ReadFromJsonAsync<List<CategoryRow>>() ?? new();
+            _alert = null;
+        }
+        catch (Exception ex)
+        {
+            _alert = ex.Message;
+        }
+        StateHasChanged();
+    }
+
+    async Task NewCategoryAsync()
+    {
+        if (!Session.IsAdmin) return;
+        var payload = new AdminCategoryCreateRequest
+        {
+            Name = "New Category",
+            Slug = "new-category",
+            IsSelectable = true,
+            Description = string.Empty
+        };
+        var resp = await Http.PostAsJsonAsync("/api/admin/categories", payload);
+        if (!resp.IsSuccessStatusCode)
+        {
+            _alert = $"Create failed: {(int)resp.StatusCode} {resp.ReasonPhrase}";
+            return;
+        }
+        await LoadAsync();
+    }
+
+    async Task SaveAsync(CategoryRow row)
+    {
+        if (!Session.IsAdmin) return;
+        row.Saving = true;
+        try
+        {
+            var payload = new AdminCategoryUpdateRequest
+            {
+                Name = row.Name,
+                Slug = row.Slug,
+                IsSelectable = row.IsSelectable,
+                Description = row.Description
+            };
+            var resp = await Http.PatchAsJsonAsync($"/api/admin/categories/{row.CategoryId}", payload);
+            if (!resp.IsSuccessStatusCode)
+            {
+                var detail = await resp.Content.ReadAsStringAsync();
+                _alert = $"Save failed: {(int)resp.StatusCode} {resp.ReasonPhrase}. {detail}";
+            }
+            else
+            {
+                _alert = null;
+                await LoadAsync();
+            }
+        }
+        catch (Exception ex)
+        {
+            _alert = ex.Message;
+        }
+        finally
+        {
+            row.Saving = false;
+            StateHasChanged();
+        }
+    }
+
+    void OpenPlaceModal(CategoryRow row)
+    {
+        _target = row;
+        _parentSlug = string.Empty;
+        _placeError = null;
+        _showPlaceModal = true;
+    }
+
+    void ClosePlaceModal()
+    {
+        if (_placing) return;
+        _showPlaceModal = false;
+        _target = null;
+        _placeError = null;
+    }
+
+    async Task PlaceAsync()
+    {
+        if (_target is null || !_selectedTreeId.HasValue) return;
+        if (string.IsNullOrWhiteSpace(_target.Slug))
+        {
+            _placeError = "Set a slug on the category before placing it.";
+            return;
+        }
+        if (string.IsNullOrWhiteSpace(_parentSlug))
+        {
+            _placeError = "Enter a parent slug.";
+            return;
+        }
+
+        _placing = true;
+        _placeError = null;
+        try
+        {
+            var payload = new AdminTreeEdgeRequest
+            {
+                ParentSlug = _parentSlug!,
+                ChildSlug = _target.Slug!,
+                Position = 100
+            };
+            var resp = await Http.PostAsJsonAsync($"/api/admin/trees/{_selectedTreeId.Value}/edges", payload);
+            if (!resp.IsSuccessStatusCode)
+            {
+                var detail = await resp.Content.ReadAsStringAsync();
+                _placeError = $"Place failed: {(int)resp.StatusCode} {resp.ReasonPhrase}. {detail}";
+                return;
+            }
+
+            _showPlaceModal = false;
+        }
+        catch (Exception ex)
+        {
+            _placeError = ex.Message;
+        }
+        finally
+        {
+            _placing = false;
+            StateHasChanged();
+        }
+    }
+
+    async Task DeleteAsync(CategoryRow row)
+    {
+        if (!Session.IsAdmin) return;
+        row.Saving = true;
+        try
+        {
+            var resp = await Http.DeleteAsync($"/api/admin/categories/{row.CategoryId}");
+            if (!resp.IsSuccessStatusCode)
+            {
+                var detail = await resp.Content.ReadAsStringAsync();
+                _alert = $"Delete failed: {(int)resp.StatusCode} {resp.ReasonPhrase}. {detail}";
+            }
+            else
+            {
+                _alert = null;
+                await LoadAsync();
+            }
+        }
+        catch (Exception ex)
+        {
+            _alert = ex.Message;
+        }
+        finally
+        {
+            row.Saving = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task OnSearchChanged(ChangeEventArgs e)
+    {
+        _search = e.Value?.ToString() ?? string.Empty;
+        await LoadAsync();
+    }
+
+    private async Task OnLeafOnlyChanged(ChangeEventArgs e)
+    {
+        _leafOnly = e.Value switch
+        {
+            bool b => b,
+            string s => string.Equals(s, "true", StringComparison.OrdinalIgnoreCase) || string.Equals(s, "on", StringComparison.OrdinalIgnoreCase),
+            _ => _leafOnly
+        };
+        await LoadAsync();
+    }
+
+    string ReqTreeValue => _reqTreeId?.ToString() ?? string.Empty;
+
+    async Task OpenReqModalAsync(CategoryRow row)
+    {
+        if (!Session.IsAdmin) return;
+        if (!row.IsSelectable)
+        {
+            _alert = "Requirements apply only to selectable categories.";
+            StateHasChanged();
+            return;
+        }
+
+        _target = row;
+        _reqTreeId = null;
+        _showRequirementModal = true;
+        _reqError = null;
+        _savingRequirement = false;
+
+        _engineSearch = string.Empty;
+        _engineFamilies.Clear();
+        _requirements.Clear();
+        _selectedEngineId = 0;
+        _reqMode = "exact_count";
+        _requiredQty = null;
+        _multiplier = null;
+        _operandField = "rotor_count";
+        _roundMode = "none";
+
+        await LoadEnginesAsync();
+        await LoadRequirementsAsync();
+    }
+
+    void CloseReqModal()
+    {
+        if (_savingRequirement) return;
+        _showRequirementModal = false;
+        _reqError = null;
+        _requirements.Clear();
+        _target = null;
+    }
+
+    async Task OnEngineSearchInput(ChangeEventArgs e)
+    {
+        _engineSearch = e.Value?.ToString() ?? string.Empty;
+        await LoadEnginesAsync();
+    }
+
+    async Task LoadEnginesAsync()
+    {
+        if (!Session.IsAdmin) return;
+        try
+        {
+            var url = string.IsNullOrWhiteSpace(_engineSearch)
+                ? "/api/admin/engine-families"
+                : $"/api/admin/engine-families?q={Uri.EscapeDataString(_engineSearch)}";
+            var response = await Http.GetAsync(url);
+            if (!response.IsSuccessStatusCode)
+            {
+                _reqError = $"Failed to load engine families ({response.StatusCode}).";
+                _engineFamilies.Clear();
+                return;
+            }
+
+            var rows = new List<EngineFamilyRow>();
+            try
+            {
+                var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+                if (json.ValueKind == JsonValueKind.Object && json.TryGetProperty("rows", out var rowsElement))
+                {
+                    rows = rowsElement.Deserialize<List<EngineFamilyRow>>() ?? new();
+                }
+                else if (json.ValueKind == JsonValueKind.Array)
+                {
+                    rows = json.Deserialize<List<EngineFamilyRow>>() ?? new();
+                }
+            }
+            catch (JsonException)
+            {
+                _reqError = "Unexpected response while loading engine families.";
+                _engineFamilies.Clear();
+                return;
+            }
+
+            var previous = _selectedEngineId;
+            _engineFamilies = rows;
+
+            if (_engineFamilies.Count == 0)
+            {
+                _selectedEngineId = 0;
+            }
+            else if (previous == 0 || !_engineFamilies.Any(e => e.EngineFamilyId == previous))
+            {
+                _selectedEngineId = _engineFamilies[0].EngineFamilyId;
+            }
+        }
+        catch (Exception ex)
+        {
+            _reqError = $"Failed to load engine families: {ex.Message}";
+        }
+        StateHasChanged();
+    }
+
+    async Task LoadRequirementsAsync()
+    {
+        if (!Session.IsAdmin || _target is null) return;
+        try
+        {
+            var url = $"/api/admin/categories/{_target.CategoryId}/requirements";
+            if (_reqTreeId is not null)
+            {
+                url += $"?treeId={_reqTreeId}";
+            }
+
+            _requirements = await Http.GetFromJsonAsync<List<RequirementRow>>(url) ?? new();
+            if (_selectedEngineId == 0 && _requirements.Count > 0)
+            {
+                _selectedEngineId = _requirements[0].EngineFamilyId;
+            }
+            _reqError = null;
+        }
+        catch (Exception ex)
+        {
+            _reqError = $"Failed to load requirements: {ex.Message}";
+            _requirements = new List<RequirementRow>();
+        }
+        StateHasChanged();
+    }
+
+    async Task OnReqTreeChanged(ChangeEventArgs e)
+    {
+        var value = e.Value?.ToString();
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            _reqTreeId = null;
+        }
+        else if (long.TryParse(value, out var parsed))
+        {
+            _reqTreeId = parsed;
+        }
+        else
+        {
+            _reqTreeId = null;
+        }
+
+        await LoadRequirementsAsync();
+    }
+
+    async Task SaveRequirementAsync()
+    {
+        if (!Session.IsAdmin || _target is null || _selectedEngineId <= 0) return;
+
+        _reqError = null;
+
+        if (_reqMode is "exact_count" or "min_count" && _requiredQty is null)
+        {
+            _reqError = "Enter a required quantity.";
+            StateHasChanged();
+            return;
+        }
+
+        if (_reqMode == "structured")
+        {
+            if (_multiplier is null)
+            {
+                _reqError = "Enter a multiplier.";
+                StateHasChanged();
+                return;
+            }
+
+            if (string.IsNullOrWhiteSpace(_operandField))
+            {
+                _reqError = "Select an operand field.";
+                StateHasChanged();
+                return;
+            }
+        }
+
+        _savingRequirement = true;
+        try
+        {
+            var payload = new
+            {
+                engine_family_id = _selectedEngineId,
+                tree_id = _reqTreeId,
+                req_mode = _reqMode,
+                requirement_type = _reqMode,
+                required_qty = _reqMode is "exact_count" or "min_count" ? _requiredQty : null,
+                multiplier = _reqMode == "structured" ? _multiplier : null,
+                operand_field = _reqMode == "structured" ? _operandField : null,
+                round_mode = _reqMode == "structured" ? _roundMode : "none",
+                notes = (string?)null,
+                formula = (string?)null
+            };
+
+            var resp = await Http.PostAsJsonAsync($"/api/admin/categories/{_target.CategoryId}/requirements", payload);
+            if (resp.IsSuccessStatusCode)
+            {
+                await LoadRequirementsAsync();
+            }
+            else
+            {
+                var detail = await resp.Content.ReadAsStringAsync();
+                _reqError = ParseError(detail, $"Save failed: {(int)resp.StatusCode} {resp.ReasonPhrase}");
+            }
+        }
+        catch (Exception ex)
+        {
+            _reqError = ex.Message;
+        }
+        finally
+        {
+            _savingRequirement = false;
+            StateHasChanged();
+        }
+    }
+
+    async Task DeleteRequirementAsync(long engineFamilyId)
+    {
+        if (!Session.IsAdmin || _target is null) return;
+        if (_savingRequirement) return;
+
+        _savingRequirement = true;
+        _reqError = null;
+        try
+        {
+            var url = $"/api/admin/categories/{_target.CategoryId}/requirements?engineFamilyId={engineFamilyId}";
+            if (_reqTreeId is not null)
+            {
+                url += $"&treeId={_reqTreeId}";
+            }
+
+            var resp = await Http.DeleteAsync(url);
+            if (resp.IsSuccessStatusCode)
+            {
+                await LoadRequirementsAsync();
+            }
+            else
+            {
+                var detail = await resp.Content.ReadAsStringAsync();
+                _reqError = ParseError(detail, $"Delete failed: {(int)resp.StatusCode} {resp.ReasonPhrase}");
+            }
+        }
+        catch (Exception ex)
+        {
+            _reqError = ex.Message;
+        }
+        finally
+        {
+            _savingRequirement = false;
+            StateHasChanged();
+        }
+    }
+
+    void BulkOpenModal()
+    {
+        if (!Session.IsAdmin) return;
+        _bulkError = null;
+        _bulkCodes = string.Empty;
+        _bulkMode = _reqMode;
+        _bulkRequiredQty = _reqMode is "exact_count" or "min_count" ? _requiredQty : null;
+        _bulkMultiplier = _reqMode == "structured" ? _multiplier : null;
+        _bulkOperand = _reqMode == "structured" ? _operandField : "rotor_count";
+        _bulkRound = _reqMode == "structured" ? _roundMode : "none";
+        _showBulkModal = true;
+    }
+
+    void CloseBulkModal()
+    {
+        if (_savingBulk) return;
+        _showBulkModal = false;
+        _bulkError = null;
+    }
+
+    async Task BulkApplyAsync()
+    {
+        if (!Session.IsAdmin || _target is null) return;
+
+        _bulkError = null;
+
+        var codes = _bulkCodes
+            .Split(new[] { '\r', '\n', ',', ';' }, StringSplitOptions.RemoveEmptyEntries)
+            .Select(code => code.Trim())
+            .Where(code => !string.IsNullOrWhiteSpace(code))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        if (codes.Length == 0)
+        {
+            _bulkError = "Enter at least one engine code.";
+            StateHasChanged();
+            return;
+        }
+
+        if (_bulkMode is "exact_count" or "min_count" && _bulkRequiredQty is null)
+        {
+            _bulkError = "Enter a required quantity.";
+            StateHasChanged();
+            return;
+        }
+
+        if (_bulkMode == "structured")
+        {
+            if (_bulkMultiplier is null)
+            {
+                _bulkError = "Enter a multiplier.";
+                StateHasChanged();
+                return;
+            }
+
+            if (string.IsNullOrWhiteSpace(_bulkOperand))
+            {
+                _bulkError = "Select an operand field.";
+                StateHasChanged();
+                return;
+            }
+        }
+
+        _savingBulk = true;
+        try
+        {
+            var payload = new
+            {
+                tree_id = _reqTreeId,
+                target_engine_codes = codes,
+                overwrite = _bulkOverwrite,
+                rule = new
+                {
+                    req_mode = _bulkMode,
+                    requirement_type = _bulkMode,
+                    required_qty = _bulkMode is "exact_count" or "min_count" ? _bulkRequiredQty : null,
+                    multiplier = _bulkMode == "structured" ? _bulkMultiplier : null,
+                    operand_field = _bulkMode == "structured" ? _bulkOperand : null,
+                    round_mode = _bulkMode == "structured" ? _bulkRound : "none",
+                    notes = (string?)null,
+                    formula = (string?)null
+                }
+            };
+
+            var resp = await Http.PostAsJsonAsync($"/api/admin/categories/{_target.CategoryId}/requirements/apply", payload);
+            if (resp.IsSuccessStatusCode)
+            {
+                _showBulkModal = false;
+                await LoadRequirementsAsync();
+            }
+            else
+            {
+                var detail = await resp.Content.ReadAsStringAsync();
+                _bulkError = ParseError(detail, $"Apply failed: {(int)resp.StatusCode} {resp.ReasonPhrase}");
+            }
+        }
+        catch (Exception ex)
+        {
+            _bulkError = ex.Message;
+        }
+        finally
+        {
+            _savingBulk = false;
+            StateHasChanged();
+        }
+    }
+
+    static string ParseError(string content, string fallback)
+    {
+        if (string.IsNullOrWhiteSpace(content))
+        {
+            return fallback;
+        }
+
+        try
+        {
+            using var doc = JsonDocument.Parse(content);
+            if (doc.RootElement.ValueKind == JsonValueKind.Object)
+            {
+                if (doc.RootElement.TryGetProperty("message", out var message) && message.ValueKind == JsonValueKind.String)
+                {
+                    var value = message.GetString();
+                    if (!string.IsNullOrWhiteSpace(value)) return value!;
+                }
+                if (doc.RootElement.TryGetProperty("error", out var error) && error.ValueKind == JsonValueKind.String)
+                {
+                    var value = error.GetString();
+                    if (!string.IsNullOrWhiteSpace(value)) return value!;
+                }
+            }
+        }
+        catch
+        {
+            // ignore parse issues
+        }
+
+        return fallback;
+    }
+}
+
+<!-- Requirements Modal -->
+@if (_showRequirementModal && _target is not null)
+{
+    <div class="fixed inset-0 z-40 bg-black/40"></div>
+    <div class="fixed inset-0 z-50 flex items-center justify-center p-4">
+        <div class="w-full max-w-5xl rounded-lg bg-white shadow-xl">
+            <div class="flex items-center justify-between border-b border-gray-100 p-3">
+                <h5 class="text-base font-semibold">Requirements · @_target?.Name</h5>
+                <button type="button" class="h-8 w-8 rounded-md text-gray-500 hover:bg-gray-100"
+                        aria-label="Close" @onclick="CloseReqModal" disabled="@_savingRequirement">&times;</button>
+            </div>
+
+            <div class="p-4">
+                @if (!string.IsNullOrWhiteSpace(_reqError))
+                {
+                    <div class="mb-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700" role="alert">@_reqError</div>
+                }
+
+                <div class="grid grid-cols-1 gap-3 md:grid-cols-12 md:items-end">
+                    <div class="md:col-span-4">
+                        <label class="mb-1 block text-sm font-medium text-gray-700">Engine family</label>
+                        <input class="block w-full rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-800 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                               placeholder="Search" value="@_engineSearch" @oninput="OnEngineSearchInput" />
+                        <select class="mt-1 block w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-800 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                                @bind="_selectedEngineId">
+                            @foreach (var ef in _engineFamilies)
+                            {
+                                <option value="@ef.EngineFamilyId">@ef.Code (@ef.RotorCount)</option>
+                            }
+                        </select>
+                    </div>
+
+                    <div class="md:col-span-3">
+                        <label class="mb-1 block text-sm font-medium text-gray-700">Mode</label>
+                        <select class="block w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-800 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                                @bind="_reqMode">
+                            <option value="exact_count">Exact count</option>
+                            <option value="min_count">Minimum</option>
+                            <option value="structured">Structured</option>
+                        </select>
+                    </div>
+
+                    <div class="md:col-span-5">
+                        @if (_reqMode is "exact_count" or "min_count")
+                        {
+                            <label class="mb-1 block text-sm font-medium text-gray-700">Required quantity</label>
+                            <input class="block w-full rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-800 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                                   type="number" step="0.001" @bind="_requiredQty" />
+                        }
+                        else
+                        {
+                            <label class="mb-1 block text-sm font-medium text-gray-700">Multiplier × Field</label>
+                            <div class="flex gap-2">
+                                <input class="w-24 rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-800 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                                       type="number" step="0.001" @bind="_multiplier" />
+                                <select class="w-40 rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-800 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                                        @bind="_operandField">
+                                    <option value="rotor_count">rotor_count</option>
+                                    <option value="hp_min">hp_min</option>
+                                    <option value="hp_max">hp_max</option>
+                                    <option value="primary_injector_cc">primary_injector_cc</option>
+                                    <option value="secondary_injector_cc">secondary_injector_cc</option>
+                                    <option value="fuel_pressure_base">fuel_pressure_base</option>
+                                    <option value="intake_port_area_mm2">intake_port_area_mm2</option>
+                                    <option value="exhaust_port_area_mm2">exhaust_port_area_mm2</option>
+                                </select>
+                                <select class="w-32 rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-800 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                                        @bind="_roundMode">
+                                    <option value="none">none</option>
+                                    <option value="ceil">ceil</option>
+                                    <option value="floor">floor</option>
+                                    <option value="round">round</option>
+                                </select>
+                            </div>
+                        }
+                    </div>
+                </div>
+
+                <div class="mt-2 grid grid-cols-1 gap-2 md:grid-cols-12 md:items-center">
+                    <div class="md:col-span-4">
+                        <label class="mb-1 block text-sm font-medium text-gray-700">Tree scope</label>
+                        <select class="block w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-800 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                                value="@ReqTreeValue" @onchange="OnReqTreeChanged">
+                            <option value="">Global (all trees)</option>
+                            @foreach (var tree in _trees)
+                            {
+                                <option value="@tree.TreeId">@tree.Name</option>
+                            }
+                        </select>
+                    </div>
+                    <div class="md:col-span-8">
+                        <small class="text-xs text-gray-500">
+                            Choose a tree to override that tree’s requirement. Leave global to apply everywhere.
+                        </small>
+                    </div>
+                </div>
+
+                <div class="mt-3 flex justify-end gap-2">
+                    <button class="rounded-md border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50"
+                            @onclick="BulkOpenModal">
+                        Bulk apply…
+                    </button>
+                    <button class="rounded-md bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-indigo-700 disabled:opacity-60"
+                            @onclick="SaveRequirementAsync" disabled="@_savingRequirement">
+                        @(_savingRequirement ? "Saving…" : "Add / Update")
+                    </button>
+                </div>
+
+                <hr class="my-3" />
+
+                <div class="max-h-[300px] overflow-auto rounded-md border border-gray-200">
+                    <table class="min-w-full text-left text-sm">
+                        <thead class="bg-gray-50 text-xs uppercase text-gray-500">
+                            <tr>
+                                <th class="px-3 py-2">Engine</th>
+                                <th class="px-3 py-2">Mode</th>
+                                <th class="px-3 py-2">Parameters</th>
+                                <th class="px-3 py-2 text-right"></th>
+                            </tr>
+                        </thead>
+                        <tbody class="divide-y divide-gray-100">
+                            @foreach (var req in _requirements)
+                            {
+                                <tr>
+                                    <td class="px-3 py-2">@req.EngineCode</td>
+                                    <td class="px-3 py-2">@req.ReqMode</td>
+                                    <td class="px-3 py-2">
+                                        @if (req.ReqMode is "exact_count" or "min_count")
+                                        {
+                                            <span>@req.RequiredQty</span>
+                                        }
+                                        else
+                                        {
+                                            <span>@req.Multiplier × @req.OperandField (@(req.RoundMode ?? "none"))</span>
+                                        }
+                                    </td>
+                                    <td class="px-3 py-2 text-right">
+                                        <button class="inline-flex items-center rounded-md border border-red-300 px-2.5 py-1.5 text-xs font-medium text-red-700 hover:bg-red-50 disabled:opacity-60"
+                                                @onclick="() => DeleteRequirementAsync(req.EngineFamilyId)" disabled="@_savingRequirement">
+                                            Delete
+                                        </button>
+                                    </td>
+                                </tr>
+                            }
+                            @if (_requirements.Count == 0)
+                            {
+                                <tr>
+                                    <td colspan="4" class="px-3 py-6 text-center text-sm text-gray-500">No requirements yet.</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <div class="flex justify-end gap-2 border-t border-gray-100 p-3">
+                <button class="rounded-md border border-gray-300 px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50"
+                        @onclick="CloseReqModal" disabled="@_savingRequirement">Close</button>
+            </div>
+        </div>
+    </div>
+}
+
+<!-- Bulk Modal -->
+@if (_showBulkModal && _target is not null)
+{
+    <div class="fixed inset-0 z-40 bg-black/40"></div>
+    <div class="fixed inset-0 z-50 flex items-center justify-center p-4">
+        <div class="w-full max-w-5xl rounded-lg bg-white shadow-xl">
+            <div class="flex items-center justify-between border-b border-gray-100 p-3">
+                <h5 class="text-base font-semibold">Bulk apply · @_target?.Name</h5>
+                <button type="button" class="h-8 w-8 rounded-md text-gray-500 hover:bg-gray-100"
+                        aria-label="Close" @onclick="CloseBulkModal" disabled="@_savingBulk">&times;</button>
+            </div>
+
+            <div class="p-4">
+                @if (!string.IsNullOrWhiteSpace(_bulkError))
+                {
+                    <div class="mb-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700" role="alert">@_bulkError</div>
+                }
+
+                <div class="grid grid-cols-1 gap-3 md:grid-cols-12">
+                    <div class="md:col-span-6">
+                        <label class="mb-1 block text-sm font-medium text-gray-700">Engine codes (one per line)</label>
+                        <textarea class="block w-full rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-800 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                                  rows="8" @bind="_bulkCodes"></textarea>
+                        <div class="mt-2 flex items-center gap-2">
+                            <input id="bulkOverwrite" class="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-600"
+                                   type="checkbox" @bind="_bulkOverwrite" />
+                            <label class="text-sm text-gray-700" for="bulkOverwrite">Overwrite existing rows</label>
+                        </div>
+                    </div>
+
+                    <div class="md:col-span-6">
+                        <label class="mb-1 block text-sm font-medium text-gray-700">Requirement</label>
+                        <select class="block w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-800 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                                @bind="_bulkMode">
+                            <option value="exact_count">Exact count</option>
+                            <option value="min_count">Minimum</option>
+                            <option value="structured">Structured</option>
+                        </select>
+
+                        @if (_bulkMode is "exact_count" or "min_count")
+                        {
+                            <label class="mt-2 block text-sm font-medium text-gray-700">Required quantity</label>
+                            <input class="block w-full rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-800 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                                   type="number" step="0.001" @bind="_bulkRequiredQty" />
+                        }
+                        else
+                        {
+                            <label class="mt-2 block text-sm font-medium text-gray-700">Multiplier × Field</label>
+                            <div class="flex gap-2">
+                                <input class="w-24 rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-800 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                                       type="number" step="0.001" @bind="_bulkMultiplier" />
+                                <select class="w-48 rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-800 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                                        @bind="_bulkOperand">
+                                    <option value="rotor_count">rotor_count</option>
+                                    <option value="hp_min">hp_min</option>
+                                    <option value="hp_max">hp_max</option>
+                                    <option value="primary_injector_cc">primary_injector_cc</option>
+                                    <option value="secondary_injector_cc">secondary_injector_cc</option>
+                                    <option value="fuel_pressure_base">fuel_pressure_base</option>
+                                    <option value="intake_port_area_mm2">intake_port_area_mm2</option>
+                                    <option value="exhaust_port_area_mm2">exhaust_port_area_mm2</option>
+                                </select>
+                                <select class="w-28 rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-800 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                                        @bind="_bulkRound">
+                                    <option value="none">round none</option>
+                                    <option value="ceil">ceil</option>
+                                    <option value="floor">floor</option>
+                                    <option value="round">round</option>
+                                </select>
+                            </div>
+                        }
+                    </div>
+                </div>
+            </div>
+
+            <div class="flex justify-end gap-2 border-t border-gray-100 p-3">
+                <button class="rounded-md border border-gray-300 px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50"
+                        @onclick="CloseBulkModal" disabled="@_savingBulk">Cancel</button>
+                <button class="rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-60"
+                        @onclick="BulkApplyAsync" disabled="@_savingBulk">
+                    @(_savingBulk ? "Applying…" : "Apply")
+                </button>
+            </div>
+        </div>
+    </div>
+}

@@ -1,0 +1,402 @@
+===== EngineAttributeDef =====
+*************************** 1. row ***************************
+       Table: EngineAttributeDef
+Create Table: CREATE TABLE `EngineAttributeDef` (
+  `engine_attr_id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+  `code` varchar(80) NOT NULL,
+  `name` varchar(160) NOT NULL,
+  `data_type` enum('int','decimal','bool','text') NOT NULL,
+  `unit` varchar(32) DEFAULT NULL,
+  PRIMARY KEY (`engine_attr_id`),
+  UNIQUE KEY `uq_engine_attr_code` (`code`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
+
+===== EngineAttributeValue =====
+*************************** 1. row ***************************
+       Table: EngineAttributeValue
+Create Table: CREATE TABLE `EngineAttributeValue` (
+  `engine_family_id` bigint(20) unsigned NOT NULL,
+  `engine_attr_id` bigint(20) unsigned NOT NULL,
+  `val_int` bigint(20) DEFAULT NULL,
+  `val_decimal` decimal(18,6) DEFAULT NULL,
+  `val_bool` tinyint(1) DEFAULT NULL,
+  `val_text` varchar(512) DEFAULT NULL,
+  PRIMARY KEY (`engine_family_id`,`engine_attr_id`),
+  KEY `fk_engine_attr_value_def` (`engine_attr_id`),
+  CONSTRAINT `fk_engine_attr_value_def` FOREIGN KEY (`engine_attr_id`) REFERENCES `EngineAttributeDef` (`engine_attr_id`) ON DELETE CASCADE ON UPDATE CASCADE,
+  CONSTRAINT `fk_engine_attr_value_family` FOREIGN KEY (`engine_family_id`) REFERENCES `EngineFamily` (`engine_family_id`) ON DELETE CASCADE ON UPDATE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
+
+===== EngineFamily =====
+*************************** 1. row ***************************
+       Table: EngineFamily
+Create Table: CREATE TABLE `EngineFamily` (
+  `engine_family_id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+  `code` varchar(80) NOT NULL,
+  `years_start` smallint(6) DEFAULT NULL,
+  `years_end` smallint(6) DEFAULT NULL,
+  `rotor_count` tinyint(4) DEFAULT NULL,
+  `hp_min` int(11) DEFAULT NULL,
+  `hp_max` int(11) DEFAULT NULL,
+  `induction` enum('NA','Turbo','TwinTurboSeq','Supercharged') DEFAULT NULL,
+  `injection` enum('Carb','TBI','EFI') DEFAULT NULL,
+  `omp_type` enum('None','Mechanical','Electric') DEFAULT NULL,
+  `ignition_layout` enum('LeadingTrailing','CoilOnPlug','Distributor') DEFAULT NULL,
+  `intake_arch` enum('4-Port','6-Port','Bridge','Peripheral') DEFAULT NULL,
+  `port_family` enum('Side','Peripheral','Mixed') DEFAULT NULL,
+  `egt_sensors` tinyint(4) DEFAULT NULL,
+  `o2_sensors` tinyint(4) DEFAULT NULL,
+  `ecu_type` enum('OEM','Aftermarket','None') DEFAULT NULL,
+  `turbo_system` enum('None','Single','SequentialTwin','ParallelTwin') DEFAULT NULL,
+  `intercooler` tinyint(1) DEFAULT NULL,
+  `apex_seal_thickness_mm` decimal(5,2) DEFAULT NULL,
+  `rotor_mass_g` int(11) DEFAULT NULL,
+  `housing_step` enum('Standard','RX8_RENESIS','Ceramic','Aftermarket_Coated') DEFAULT NULL,
+  `exhaust_port_type` enum('Side','Peripheral') DEFAULT NULL,
+  `emissions_pkg` enum('None','JDM','USDM','Euro') DEFAULT NULL,
+  `compression_min_psi` int(11) DEFAULT NULL,
+  `compression_max_psi` int(11) DEFAULT NULL,
+  `notes` text DEFAULT NULL,
+  `created_at` timestamp NOT NULL DEFAULT current_timestamp(),
+  `updated_at` timestamp NOT NULL DEFAULT current_timestamp() ON UPDATE current_timestamp(),
+  `scene_gltf_uri` varchar(500) DEFAULT NULL,
+  PRIMARY KEY (`engine_family_id`),
+  UNIQUE KEY `uq_engine_code` (`code`)
+) ENGINE=InnoDB AUTO_INCREMENT=590 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
+
+===== EngineFamilyTree =====
+*************************** 1. row ***************************
+       Table: EngineFamilyTree
+Create Table: CREATE TABLE `EngineFamilyTree` (
+  `engine_family_id` bigint(20) unsigned NOT NULL,
+  `tree_id` bigint(20) unsigned NOT NULL,
+  `is_default` tinyint(1) NOT NULL DEFAULT 0,
+  PRIMARY KEY (`engine_family_id`,`tree_id`),
+  KEY `ix_eft_tree` (`tree_id`),
+  KEY `ix_eft_engine_default` (`engine_family_id`,`is_default`),
+  CONSTRAINT `fk_eft_engine` FOREIGN KEY (`engine_family_id`) REFERENCES `EngineFamily` (`engine_family_id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_eft_tree` FOREIGN KEY (`tree_id`) REFERENCES `CategoryTree` (`tree_id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
+
+===== EngineFamilyVehicle =====
+*************************** 1. row ***************************
+       Table: EngineFamilyVehicle
+Create Table: CREATE TABLE `EngineFamilyVehicle` (
+  `engine_family_vehicle_id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+  `engine_family_id` bigint(20) unsigned NOT NULL,
+  `model` varchar(120) NOT NULL,
+  `market` varchar(40) DEFAULT NULL,
+  `years_start` smallint(6) DEFAULT NULL,
+  `years_end` smallint(6) DEFAULT NULL,
+  PRIMARY KEY (`engine_family_vehicle_id`),
+  KEY `ix_ef_vehicle_family` (`engine_family_id`,`model`),
+  CONSTRAINT `fk_ef_vehicle_family` FOREIGN KEY (`engine_family_id`) REFERENCES `EngineFamily` (`engine_family_id`) ON DELETE CASCADE ON UPDATE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
+
+===== Part =====
+*************************** 1. row ***************************
+       Table: Part
+Create Table: CREATE TABLE `Part` (
+  `part_id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+  `sku` varchar(120) DEFAULT NULL,
+  `name` varchar(255) NOT NULL,
+  `description` text DEFAULT NULL,
+  `image_url` varchar(800) DEFAULT NULL,
+  `brand_id` bigint(20) unsigned DEFAULT NULL,
+  `is_kit` tinyint(1) NOT NULL DEFAULT 0,
+  `uom` varchar(32) NOT NULL DEFAULT 'piece',
+  `pieces_per_unit` decimal(12,3) NOT NULL DEFAULT 1.000,
+  `status` enum('active','discontinued','draft') NOT NULL DEFAULT 'active',
+  `mpn` varchar(120) DEFAULT NULL,
+  `upc` varchar(24) DEFAULT NULL,
+  `gtin` varchar(24) DEFAULT NULL,
+  `core_charge` decimal(12,2) DEFAULT NULL,
+  `created_at` timestamp NOT NULL DEFAULT current_timestamp(),
+  `updated_at` timestamp NOT NULL DEFAULT current_timestamp() ON UPDATE current_timestamp(),
+  `gltf_uri` varchar(500) DEFAULT NULL,
+  `gltf_attach_node` varchar(100) DEFAULT NULL,
+  PRIMARY KEY (`part_id`),
+  UNIQUE KEY `uq_part_sku` (`sku`),
+  KEY `ix_part_name` (`name`),
+  KEY `ix_part_brand` (`brand_id`),
+  CONSTRAINT `fk_part_brand` FOREIGN KEY (`brand_id`) REFERENCES `Brand` (`brand_id`) ON DELETE SET NULL ON UPDATE CASCADE
+) ENGINE=InnoDB AUTO_INCREMENT=91020 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
+
+===== PartAttribute =====
+*************************** 1. row ***************************
+       Table: PartAttribute
+Create Table: CREATE TABLE `PartAttribute` (
+  `part_id` bigint(20) unsigned NOT NULL,
+  `attribute_id` bigint(20) unsigned NOT NULL,
+  `value_num` decimal(18,6) DEFAULT NULL,
+  `value_text` varchar(255) DEFAULT NULL,
+  `value_bool` tinyint(1) DEFAULT NULL,
+  PRIMARY KEY (`part_id`,`attribute_id`),
+  KEY `idx_part_attribute_attr` (`attribute_id`),
+  KEY `idx_partattr_attr` (`attribute_id`,`part_id`),
+  KEY `idx_partattr_part` (`part_id`,`attribute_id`),
+  CONSTRAINT `fk_part_attribute_attribute` FOREIGN KEY (`attribute_id`) REFERENCES `Attribute` (`attribute_id`) ON DELETE CASCADE ON UPDATE CASCADE,
+  CONSTRAINT `fk_part_attribute_part` FOREIGN KEY (`part_id`) REFERENCES `Part` (`part_id`) ON DELETE CASCADE ON UPDATE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
+
+===== PartCategory =====
+*************************** 1. row ***************************
+       Table: PartCategory
+Create Table: CREATE TABLE `PartCategory` (
+  `part_id` bigint(20) unsigned NOT NULL,
+  `category_id` bigint(20) unsigned NOT NULL,
+  `is_primary` tinyint(1) NOT NULL DEFAULT 1,
+  `coverage_weight` decimal(6,3) NOT NULL DEFAULT 1.000,
+  `display_order` int(11) NOT NULL DEFAULT 0,
+  PRIMARY KEY (`part_id`,`category_id`),
+  KEY `ix_partcat_category` (`category_id`,`display_order`),
+  KEY `ix_partcat_part` (`part_id`),
+  KEY `idx_part_category` (`category_id`,`part_id`),
+  KEY `ix_part_category_part` (`part_id`),
+  KEY `ix_part_category_cat` (`category_id`),
+  CONSTRAINT `fk_partcat_category` FOREIGN KEY (`category_id`) REFERENCES `Category` (`category_id`) ON DELETE CASCADE ON UPDATE CASCADE,
+  CONSTRAINT `fk_partcat_part` FOREIGN KEY (`part_id`) REFERENCES `Part` (`part_id`) ON DELETE CASCADE ON UPDATE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
+
+===== PartComponent =====
+*************************** 1. row ***************************
+       Table: PartComponent
+Create Table: CREATE TABLE `PartComponent` (
+  `parent_part_id` bigint(20) unsigned NOT NULL,
+  `child_part_id` bigint(20) unsigned NOT NULL,
+  `qty_per_parent` decimal(12,3) NOT NULL,
+  PRIMARY KEY (`parent_part_id`,`child_part_id`),
+  KEY `ix_pc_child` (`child_part_id`),
+  CONSTRAINT `fk_pc_child` FOREIGN KEY (`child_part_id`) REFERENCES `Part` (`part_id`) ON UPDATE CASCADE,
+  CONSTRAINT `fk_pc_parent` FOREIGN KEY (`parent_part_id`) REFERENCES `Part` (`part_id`) ON DELETE CASCADE ON UPDATE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
+
+===== PartFitment =====
+*************************** 1. row ***************************
+       Table: PartFitment
+Create Table: CREATE TABLE `PartFitment` (
+  `part_fitment_id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+  `part_id` bigint(20) unsigned NOT NULL,
+  `engine_family_id` bigint(20) unsigned NOT NULL,
+  `years_start` smallint(6) DEFAULT NULL,
+  `years_end` smallint(6) DEFAULT NULL,
+  `notes` varchar(255) DEFAULT NULL,
+  PRIMARY KEY (`part_fitment_id`),
+  UNIQUE KEY `uq_fitment` (`part_id`,`engine_family_id`,`years_start`,`years_end`),
+  KEY `ix_fitment_engine` (`engine_family_id`),
+  CONSTRAINT `fk_fitment_engine` FOREIGN KEY (`engine_family_id`) REFERENCES `EngineFamily` (`engine_family_id`) ON DELETE CASCADE ON UPDATE CASCADE,
+  CONSTRAINT `fk_fitment_part` FOREIGN KEY (`part_id`) REFERENCES `Part` (`part_id`) ON DELETE CASCADE ON UPDATE CASCADE
+) ENGINE=InnoDB AUTO_INCREMENT=126 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
+
+===== PartOffering =====
+*************************** 1. row ***************************
+       Table: PartOffering
+Create Table: CREATE TABLE `PartOffering` (
+  `offering_id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+  `part_id` bigint(20) unsigned NOT NULL,
+  `vendor_id` bigint(20) unsigned NOT NULL,
+  `price` decimal(12,2) DEFAULT NULL,
+  `shipping_cost_est` decimal(12,2) DEFAULT NULL,
+  `msrp` decimal(12,2) DEFAULT NULL,
+  `map_price` decimal(12,2) DEFAULT NULL,
+  `currency` char(3) NOT NULL DEFAULT 'USD',
+  `availability` enum('in_stock','backorder','discontinued','unknown') NOT NULL DEFAULT 'in_stock',
+  `shipping_class` varchar(60) DEFAULT NULL,
+  `url` varchar(600) DEFAULT NULL,
+  `affiliate_url` varchar(800) DEFAULT NULL,
+  `affiliate_notes` varchar(255) DEFAULT NULL,
+  `effective_from` datetime NOT NULL DEFAULT current_timestamp(),
+  `effective_to` datetime DEFAULT NULL,
+  `last_checked_at` datetime DEFAULT NULL,
+  `scraped_source` varchar(120) DEFAULT NULL,
+  `created_at` timestamp NOT NULL DEFAULT current_timestamp(),
+  PRIMARY KEY (`offering_id`),
+  KEY `ix_offering_part_time` (`part_id`,`effective_from`),
+  KEY `ix_offering_vendor` (`vendor_id`),
+  KEY `ix_offering_price` (`part_id`,`price`),
+  CONSTRAINT `fk_offering_part` FOREIGN KEY (`part_id`) REFERENCES `Part` (`part_id`) ON DELETE CASCADE ON UPDATE CASCADE,
+  CONSTRAINT `fk_offering_vendor` FOREIGN KEY (`vendor_id`) REFERENCES `Vendor` (`vendor_id`) ON DELETE CASCADE ON UPDATE CASCADE
+) ENGINE=InnoDB AUTO_INCREMENT=41 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
+
+===== PartSlot =====
+*************************** 1. row ***************************
+       Table: PartSlot
+Create Table: CREATE TABLE `PartSlot` (
+  `part_slot_id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+  `slot_id` bigint(20) unsigned NOT NULL,
+  `category_id` bigint(20) unsigned DEFAULT NULL,
+  `part_id` bigint(20) unsigned DEFAULT NULL,
+  `allow` tinyint(1) NOT NULL DEFAULT 1,
+  PRIMARY KEY (`part_slot_id`),
+  UNIQUE KEY `uq_partslot_category` (`slot_id`,`category_id`),
+  UNIQUE KEY `uq_partslot_part` (`slot_id`,`part_id`),
+  KEY `idx_partslot_slot` (`slot_id`),
+  KEY `ix_part_slot_slot` (`slot_id`),
+  KEY `ix_part_slot_part` (`part_id`),
+  KEY `ix_part_slot_category` (`category_id`),
+  CONSTRAINT `fk_partslot_category` FOREIGN KEY (`category_id`) REFERENCES `Category` (`category_id`) ON DELETE CASCADE ON UPDATE CASCADE,
+  CONSTRAINT `fk_partslot_part` FOREIGN KEY (`part_id`) REFERENCES `Part` (`part_id`) ON DELETE CASCADE ON UPDATE CASCADE,
+  CONSTRAINT `fk_partslot_slot` FOREIGN KEY (`slot_id`) REFERENCES `Slot` (`slot_id`) ON DELETE CASCADE ON UPDATE CASCADE
+) ENGINE=InnoDB AUTO_INCREMENT=82 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
+
+===== PartStat =====
+*************************** 1. row ***************************
+       Table: PartStat
+Create Table: CREATE TABLE `PartStat` (
+  `part_id` bigint(20) unsigned NOT NULL,
+  `stat_id` bigint(20) unsigned NOT NULL,
+  `value_num` decimal(18,6) NOT NULL,
+  PRIMARY KEY (`part_id`,`stat_id`),
+  KEY `stat_id` (`stat_id`),
+  CONSTRAINT `PartStat_ibfk_1` FOREIGN KEY (`part_id`) REFERENCES `Part` (`part_id`) ON DELETE CASCADE ON UPDATE CASCADE,
+  CONSTRAINT `PartStat_ibfk_2` FOREIGN KEY (`stat_id`) REFERENCES `StatDef` (`stat_id`) ON DELETE CASCADE ON UPDATE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+
+===== Slot =====
+*************************** 1. row ***************************
+       Table: Slot
+Create Table: CREATE TABLE `Slot` (
+  `slot_id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+  `engine_family_id` bigint(20) unsigned NOT NULL,
+  `subsystem_id` bigint(20) unsigned DEFAULT NULL,
+  `key` varchar(100) NOT NULL,
+  `name` varchar(200) NOT NULL,
+  `gltf_node_path` varchar(300) NOT NULL,
+  `transform` longtext CHARACTER SET utf8mb4 COLLATE utf8mb4_bin DEFAULT NULL CHECK (json_valid(`transform`)),
+  `min_required` int(11) NOT NULL DEFAULT 1,
+  `capacity` int(11) NOT NULL DEFAULT 1,
+  `notes` text DEFAULT NULL,
+  `mate_tx` float DEFAULT NULL,
+  `mate_ty` float DEFAULT NULL,
+  `mate_tz` float DEFAULT NULL,
+  `mate_rx` float DEFAULT NULL,
+  `mate_ry` float DEFAULT NULL,
+  `mate_rz` float DEFAULT NULL,
+  `mate_scale` float DEFAULT NULL,
+  PRIMARY KEY (`slot_id`),
+  UNIQUE KEY `uq_slot_key` (`engine_family_id`,`key`),
+  KEY `idx_slot_engine` (`engine_family_id`),
+  KEY `idx_slot_subsystem` (`subsystem_id`),
+  CONSTRAINT `fk_slot_engine_family` FOREIGN KEY (`engine_family_id`) REFERENCES `EngineFamily` (`engine_family_id`) ON DELETE CASCADE ON UPDATE CASCADE,
+  CONSTRAINT `fk_slot_subsystem` FOREIGN KEY (`subsystem_id`) REFERENCES `Subsystem` (`subsystem_id`) ON DELETE SET NULL ON UPDATE CASCADE
+) ENGINE=InnoDB AUTO_INCREMENT=58 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
+
+===== SlotEdge =====
+*************************** 1. row ***************************
+       Table: SlotEdge
+Create Table: CREATE TABLE `SlotEdge` (
+  `slot_edge_id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+  `engine_family_id` bigint(20) unsigned NOT NULL,
+  `from_slot_id` bigint(20) unsigned NOT NULL,
+  `to_slot_id` bigint(20) unsigned NOT NULL,
+  `edge` enum('REQUIRES','EXCLUDES','MATCH_ATTR','ENABLED_IF') NOT NULL,
+  `min_required` int(11) NOT NULL DEFAULT 1,
+  `rule` longtext CHARACTER SET utf8mb4 COLLATE utf8mb4_bin DEFAULT NULL CHECK (json_valid(`rule`)),
+  PRIMARY KEY (`slot_edge_id`),
+  UNIQUE KEY `uq_slotedge` (`from_slot_id`,`to_slot_id`,`edge`),
+  KEY `idx_slotedge_from` (`from_slot_id`),
+  KEY `idx_slotedge_to` (`to_slot_id`),
+  KEY `fk_slotedge_engine_family` (`engine_family_id`),
+  CONSTRAINT `fk_slotedge_engine_family` FOREIGN KEY (`engine_family_id`) REFERENCES `EngineFamily` (`engine_family_id`) ON DELETE CASCADE ON UPDATE CASCADE,
+  CONSTRAINT `fk_slotedge_from` FOREIGN KEY (`from_slot_id`) REFERENCES `Slot` (`slot_id`) ON DELETE CASCADE ON UPDATE CASCADE,
+  CONSTRAINT `fk_slotedge_to` FOREIGN KEY (`to_slot_id`) REFERENCES `Slot` (`slot_id`) ON DELETE CASCADE ON UPDATE CASCADE
+) ENGINE=InnoDB AUTO_INCREMENT=28 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
+
+===== slot_socket_alias =====
+*************************** 1. row ***************************
+       Table: slot_socket_alias
+Create Table: CREATE TABLE `slot_socket_alias` (
+  `slot_id` bigint(20) unsigned NOT NULL,
+  `alias` varchar(128) NOT NULL,
+  PRIMARY KEY (`slot_id`,`alias`),
+  KEY `ix_alias` (`alias`),
+  CONSTRAINT `fk_slot_alias_slot` FOREIGN KEY (`slot_id`) REFERENCES `Slot` (`slot_id`) ON DELETE CASCADE ON UPDATE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
+
+===== Subsystem =====
+*************************** 1. row ***************************
+       Table: Subsystem
+Create Table: CREATE TABLE `Subsystem` (
+  `subsystem_id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+  `engine_family_id` bigint(20) unsigned NOT NULL,
+  `key` varchar(100) NOT NULL,
+  `name` varchar(200) NOT NULL,
+  `gltf_node_path` varchar(300) DEFAULT NULL,
+  `sort_order` int(11) NOT NULL DEFAULT 0,
+  PRIMARY KEY (`subsystem_id`),
+  UNIQUE KEY `uq_subsystem_key` (`engine_family_id`,`key`),
+  CONSTRAINT `fk_subsystem_engine_family` FOREIGN KEY (`engine_family_id`) REFERENCES `EngineFamily` (`engine_family_id`) ON DELETE CASCADE ON UPDATE CASCADE
+) ENGINE=InnoDB AUTO_INCREMENT=12 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
+
+===== Category =====
+*************************** 1. row ***************************
+       Table: Category
+Create Table: CREATE TABLE `Category` (
+  `category_id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+  `name` varchar(200) NOT NULL,
+  `slug` varchar(200) DEFAULT NULL,
+  `description` text DEFAULT NULL,
+  `is_selectable` tinyint(1) NOT NULL DEFAULT 1,
+  `created_at` timestamp NOT NULL DEFAULT current_timestamp(),
+  `updated_at` timestamp NOT NULL DEFAULT current_timestamp() ON UPDATE current_timestamp(),
+  PRIMARY KEY (`category_id`),
+  UNIQUE KEY `uq_category_slug` (`slug`)
+) ENGINE=InnoDB AUTO_INCREMENT=90042 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
+
+===== CategoryEdge =====
+*************************** 1. row ***************************
+       Table: CategoryEdge
+Create Table: CREATE TABLE `CategoryEdge` (
+  `tree_id` bigint(20) unsigned NOT NULL,
+  `parent_category_id` bigint(20) unsigned NOT NULL,
+  `child_category_id` bigint(20) unsigned NOT NULL,
+  `position` int(11) NOT NULL DEFAULT 0,
+  PRIMARY KEY (`tree_id`,`parent_category_id`,`child_category_id`),
+  KEY `fk_cat_edge_parent` (`parent_category_id`),
+  KEY `fk_cat_edge_child` (`child_category_id`),
+  KEY `ix_edge_parent` (`tree_id`,`parent_category_id`,`position`),
+  KEY `ix_edge_child` (`tree_id`,`child_category_id`),
+  CONSTRAINT `fk_cat_edge_child` FOREIGN KEY (`child_category_id`) REFERENCES `Category` (`category_id`) ON DELETE CASCADE ON UPDATE CASCADE,
+  CONSTRAINT `fk_cat_edge_parent` FOREIGN KEY (`parent_category_id`) REFERENCES `Category` (`category_id`) ON DELETE CASCADE ON UPDATE CASCADE,
+  CONSTRAINT `fk_cat_edge_tree` FOREIGN KEY (`tree_id`) REFERENCES `CategoryTree` (`tree_id`) ON DELETE CASCADE ON UPDATE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
+
+===== CategoryRequirement =====
+*************************** 1. row ***************************
+       Table: CategoryRequirement
+Create Table: CREATE TABLE `CategoryRequirement` (
+  `req_id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+  `engine_family_id` bigint(20) unsigned NOT NULL,
+  `category_id` bigint(20) unsigned NOT NULL,
+  `tree_id` bigint(20) unsigned DEFAULT NULL,
+  `tree_scope` bigint(20) unsigned NOT NULL DEFAULT 0,
+  `requirement_type` enum('exact_count','min_count','structured','formula') NOT NULL DEFAULT 'exact_count',
+  `req_mode` enum('exact_count','min_count','structured','formula') NOT NULL DEFAULT 'exact_count',
+  `multiplier` decimal(12,4) DEFAULT NULL,
+  `operand_field` enum('rotor_count','hp_min','hp_max','primary_injector_cc','secondary_injector_cc','fuel_pressure_base','intake_port_area_mm2','exhaust_port_area_mm2') DEFAULT NULL,
+  `round_mode` enum('none','ceil','floor','round') NOT NULL DEFAULT 'none',
+  `required_qty` decimal(12,3) DEFAULT NULL,
+  `formula` varchar(255) DEFAULT NULL,
+  `notes` varchar(255) DEFAULT NULL,
+  PRIMARY KEY (`req_id`),
+  UNIQUE KEY `uq_category_requirement_scope` (`engine_family_id`,`category_id`,`tree_scope`),
+  KEY `ix_req_category` (`category_id`),
+  KEY `ix_req_tree` (`tree_id`),
+  KEY `ix_req_engine_family` (`engine_family_id`),
+  CONSTRAINT `fk_req_category` FOREIGN KEY (`category_id`) REFERENCES `Category` (`category_id`) ON DELETE CASCADE ON UPDATE CASCADE,
+  CONSTRAINT `fk_req_engine` FOREIGN KEY (`engine_family_id`) REFERENCES `EngineFamily` (`engine_family_id`) ON DELETE CASCADE ON UPDATE CASCADE,
+  CONSTRAINT `fk_req_tree` FOREIGN KEY (`tree_id`) REFERENCES `CategoryTree` (`tree_id`) ON DELETE CASCADE ON UPDATE CASCADE
+) ENGINE=InnoDB AUTO_INCREMENT=75 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
+
+===== CategoryTree =====
+*************************** 1. row ***************************
+       Table: CategoryTree
+Create Table: CREATE TABLE `CategoryTree` (
+  `tree_id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+  `name` varchar(200) NOT NULL,
+  `description` text DEFAULT NULL,
+  `created_at` timestamp NOT NULL DEFAULT current_timestamp(),
+  `updated_at` timestamp NOT NULL DEFAULT current_timestamp() ON UPDATE current_timestamp(),
+  PRIMARY KEY (`tree_id`)
+) ENGINE=InnoDB AUTO_INCREMENT=30 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
+

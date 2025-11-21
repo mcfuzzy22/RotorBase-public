@@ -1,0 +1,376 @@
+@page "/builds/public/{Slug}"
+@rendermode InteractiveServer
+@using System.Net.Http
+@using System.Net.Http.Json
+@using System.Text.Json
+@using System.Text.Json.Serialization
+@inject HttpClient Http
+@inject NavigationManager Nav
+@inject UserSession Session
+
+<h1 class="sr-only">Public Build</h1>
+
+<div class="min-h-[calc(100vh-4rem)] bg-background text-foreground">
+  <div aria-hidden="true" class="pointer-events-none absolute inset-x-0 top-0 h-32 bg-grid opacity-[.12]"></div>
+
+  <section class="container py-6">
+    @if (IsLoading)
+    {
+      <div class="card px-4 py-3 flex items-center gap-2 text-sm">
+        <svg class="animate-spin h-4 w-4" viewBox="0 0 24 24">
+          <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+          <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4A4 4 0 004 12z"></path>
+        </svg>
+        <span>Loading build…</span>
+      </div>
+    }
+    else if (!string.IsNullOrEmpty(ErrorMessage))
+    {
+      <div class="card ring-1 ring-danger/25 bg-danger/5 text-danger px-4 py-3">@ErrorMessage</div>
+    }
+    else if (Build is null)
+    {
+      <div class="card ring-1 ring-warning/25 bg-warning/5 text-warning px-4 py-3">Build not found.</div>
+    }
+    else
+    {
+      <!-- Header -->
+      <div class="mb-5 flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1 class="text-2xl md:text-3xl font-bold tracking-tight">@Build.Name</h1>
+          <div class="text-sm text-foreground/70">Engine: @Build.EngineCode</div>
+          @if (Summary is not null)
+          {
+            <div class="mt-2 text-sm text-foreground/70">
+              Completion: @FormatCompletion(Summary.CompletionPct) · Estimated cost: @FormatCost(Summary.EstimatedCostLowest)
+            </div>
+          }
+        </div>
+
+        <div class="flex flex-col items-end gap-2">
+          @if (!string.IsNullOrEmpty(CloneError))
+          {
+            <div class="card ring-1 ring-danger/25 bg-danger/5 text-danger px-3 py-2 text-xs">@CloneError</div>
+          }
+          <button class="btn btn-primary" @onclick="CloneAsync" disabled="@CloneBusy">
+            @(CloneBusy ? "Cloning…" : "Clone this build")
+          </button>
+        </div>
+      </div>
+
+      @if (Summary is not null)
+      {
+        <!-- Stat cards -->
+        <div class="grid gap-3 md:grid-cols-3 mb-5">
+          <div class="card p-4">
+            <div class="text-xs uppercase tracking-wide text-foreground/60">Completion</div>
+            <div class="mt-1 text-3xl font-semibold">@FormatCompletion(Summary.CompletionPct)</div>
+          </div>
+          <div class="card p-4">
+            <div class="text-xs uppercase tracking-wide text-foreground/60">Estimated cost</div>
+            <div class="mt-1 text-3xl font-semibold tabular-nums">@FormatCost(Summary.EstimatedCostLowest)</div>
+          </div>
+          <div class="card p-4">
+            <div class="text-xs uppercase tracking-wide text-foreground/60">Categories complete</div>
+            <div class="mt-1 text-3xl font-semibold">@Summary.CategoriesComplete / @Summary.CategoriesTotal</div>
+          </div>
+        </div>
+      }
+
+      <!-- Category progress -->
+      <div class="card p-0 overflow-hidden mb-5">
+        <div class="px-4 py-3 border-b border-border/60">
+          <h5 class="text-base font-semibold m-0">Category progress</h5>
+        </div>
+        @if (Categories.Count == 0)
+        {
+          <div class="p-3 text-sm text-foreground/70">No category breakdown available.</div>
+        }
+        else
+        {
+          <div class="overflow-x-auto">
+            <table class="table">
+              <thead>
+                <tr>
+                  <th>Category</th>
+                  <th class="text-right">Required</th>
+                  <th class="text-right">Supplied</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody class="[&>tr:nth-child(odd)]:bg-muted/40">
+                @foreach (var row in Categories)
+                {
+                  <tr>
+                    <td>@row.CategoryName</td>
+                    <td class="text-right tabular-nums">@FormatQuantity(row.RequiredQty)</td>
+                    <td class="text-right tabular-nums">@FormatQuantity(row.PiecesSupplied)</td>
+                    <td class="capitalize">@row.Status</td>
+                  </tr>
+                }
+              </tbody>
+            </table>
+          </div>
+        }
+      </div>
+
+      <!-- Buy plan -->
+      <div id="buy" class="card p-0 overflow-hidden">
+        <div class="flex items-center justify-between px-4 py-3 border-b border-border/60">
+          <h5 class="text-base font-semibold m-0">Buy plan</h5>
+          <div class="flex items-center gap-2">
+            <select class="input h-9 w-[160px]" value="@BuyMode" @onchange="OnModeChanged">
+              <option value="cheapest">Cheapest mix</option>
+              <option value="singlevendor">Single vendor</option>
+            </select>
+            <button class="btn btn-ghost h-9 px-3" @onclick="LoadBuyPlanAsync" disabled="@BuyLoading">Refresh</button>
+          </div>
+        </div>
+
+        <div class="p-4">
+          @if (!string.IsNullOrEmpty(BuyError))
+          {
+            <div class="card ring-1 ring-danger/25 bg-danger/5 text-danger px-3 py-2">@BuyError</div>
+          }
+          else if (BuyLoading)
+          {
+            <div class="flex items-center gap-2 text-sm">
+              <svg class="animate-spin h-4 w-4" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4A4 4 0 004 12z"></path>
+              </svg>
+              <span>Crunching prices…</span>
+            </div>
+          }
+          else if (BuyPlanItems.Count == 0)
+          {
+            <div class="text-sm text-foreground/70">No buy plan available.</div>
+          }
+          else
+          {
+            @if (!string.IsNullOrEmpty(BuyVendor) && string.Equals(BuyMode, "singlevendor", StringComparison.OrdinalIgnoreCase))
+            {
+              <div class="text-xs text-foreground/70 mb-2">Vendor: <strong class="text-foreground">@BuyVendor</strong></div>
+            }
+
+            <div class="overflow-x-auto">
+              <table class="table">
+                <thead>
+                  <tr>
+                    <th>Part ID</th>
+                    <th class="text-right">Qty</th>
+                    <th class="text-right">Unit</th>
+                    <th>Vendor</th>
+                    <th class="text-right"></th>
+                  </tr>
+                </thead>
+                <tbody class="[&>tr:nth-child(odd)]:bg-muted/40">
+                  @foreach (var item in BuyPlanItems)
+                  {
+                    <tr>
+                      <td class="tabular-nums">@item.PartId</td>
+                      <td class="text-right tabular-nums">@item.Qty</td>
+                      <td class="text-right tabular-nums">@item.UnitPrice.ToString("C")</td>
+                      <td>@(string.IsNullOrEmpty(item.Vendor) ? BuyVendor ?? "—" : item.Vendor)</td>
+                      <td class="text-right">
+                        <a class="btn btn-soft h-8 px-3" href="@GetBuyLink(item)" target="_blank" rel="noopener">Buy</a>
+                      </td>
+                    </tr>
+                  }
+                </tbody>
+              </table>
+            </div>
+
+            <div class="mt-3 text-right text-base font-semibold tabular-nums">
+              Total: @BuyPlanTotal.ToString("C")
+            </div>
+          }
+        </div>
+      </div>
+    }
+  </section>
+</div>
+
+@code {
+    [Parameter] public string Slug { get; set; } = string.Empty;
+
+    class PublicBuildEnvelope
+    {
+        [JsonPropertyName("build")] public PublicBuildDetailDto? Build { get; set; }
+        [JsonPropertyName("summary")] public PublicBuildSummaryDto? Summary { get; set; }
+        [JsonPropertyName("categories")] public List<PublicBuildCategoryDto> Categories { get; set; } = new();
+    }
+
+    class PublicBuyPlanResponse
+    {
+        [JsonPropertyName("mode")] public string Mode { get; set; } = string.Empty;
+        [JsonPropertyName("items")] public List<PublicBuyPlanItem> Items { get; set; } = new();
+        [JsonPropertyName("totals")] public TotalsDto? Totals { get; set; }
+        [JsonPropertyName("vendor")] public string? Vendor { get; set; }
+    }
+
+    class PublicBuyPlanItem
+    {
+        [JsonPropertyName("part_id")] public long PartId { get; set; }
+        [JsonPropertyName("qty")] public decimal Qty { get; set; }
+        [JsonPropertyName("unit_price")] public decimal UnitPrice { get; set; }
+        [JsonPropertyName("vendor")] public string? Vendor { get; set; }
+        [JsonPropertyName("vendor_id")] public long? VendorId { get; set; }
+        [JsonPropertyName("offering_id")] public long? OfferingId { get; set; }
+    }
+
+    class TotalsDto
+    {
+        [JsonPropertyName("items")] public decimal Items { get; set; }
+    }
+
+    PublicBuildDetailDto? Build;
+    PublicBuildSummaryDto? Summary;
+    List<PublicBuildCategoryDto> Categories = new();
+    bool IsLoading = true;
+    string? ErrorMessage;
+
+    bool CloneBusy;
+    string? CloneError;
+
+    string BuyMode = "cheapest";
+    bool BuyLoading;
+    string? BuyError;
+    List<PublicBuyPlanItem> BuyPlanItems = new();
+    decimal BuyPlanTotal;
+    string? BuyVendor;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        await LoadAsync();
+    }
+
+    async Task LoadAsync()
+    {
+        IsLoading = true;
+        ErrorMessage = null;
+        try
+        {
+            var envelope = await Http.GetFromJsonAsync<PublicBuildEnvelope>($"/api/public/builds/{Slug}");
+            Build = envelope?.Build;
+            Summary = envelope?.Summary;
+            Categories = envelope?.Categories ?? new();
+            BuyPlanItems.Clear();
+            BuyPlanTotal = 0m;
+            BuyVendor = null;
+
+            if (Build is not null)
+            {
+                await LoadBuyPlanAsync();
+            }
+        }
+        catch (HttpRequestException ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound)
+        {
+            ErrorMessage = "This build is no longer public.";
+        }
+        catch (Exception ex)
+        {
+            ErrorMessage = ex.Message;
+        }
+        finally
+        {
+            IsLoading = false;
+            StateHasChanged();
+        }
+    }
+
+    async Task LoadBuyPlanAsync()
+    {
+        if (Build is null) return;
+        BuyLoading = true;
+        BuyError = null;
+        BuyPlanItems.Clear();
+        BuyVendor = null;
+        try
+        {
+            var resp = await Http.PostAsJsonAsync($"/api/public/builds/{Slug}/buyplan?mode={BuyMode}", new { });
+            if (resp.IsSuccessStatusCode)
+            {
+                var payload = await resp.Content.ReadFromJsonAsync<PublicBuyPlanResponse>();
+                BuyPlanItems = payload?.Items ?? new();
+                BuyPlanTotal = payload?.Totals?.Items ?? 0m;
+                BuyVendor = payload?.Vendor;
+            }
+            else
+            {
+                var detail = await resp.Content.ReadAsStringAsync();
+                BuyError = $"Buy plan failed: {(int)resp.StatusCode} {resp.ReasonPhrase}. {detail}";
+            }
+        }
+        catch (Exception ex)
+        {
+            BuyError = ex.Message;
+        }
+        finally
+        {
+            BuyLoading = false;
+            StateHasChanged();
+        }
+    }
+
+    Task OnModeChanged(ChangeEventArgs e)
+    {
+        var value = e.Value?.ToString()?.ToLowerInvariant();
+        BuyMode = value == "singlevendor" ? "singlevendor" : "cheapest";
+        return LoadBuyPlanAsync();
+    }
+
+    async Task CloneAsync()
+    {
+        if (Build is null || CloneBusy) return;
+        CloneBusy = true;
+        CloneError = null;
+        try
+        {
+            var resp = await Http.PostAsJsonAsync($"/api/public/builds/{Slug}/clone", new { });
+            if (resp.IsSuccessStatusCode)
+            {
+                var doc = await resp.Content.ReadFromJsonAsync<JsonElement?>();
+                if (doc is JsonElement el && el.TryGetProperty("build_id", out var idNode) && idNode.TryGetInt64(out var id))
+                {
+                    Nav.NavigateTo($"/builder/{id}");
+                }
+            }
+            else if (resp.StatusCode == System.Net.HttpStatusCode.Unauthorized)
+            {
+                CloneError = "Sign in to clone this build.";
+            }
+            else
+            {
+                var detail = await resp.Content.ReadAsStringAsync();
+                CloneError = $"Clone failed: {(int)resp.StatusCode} {resp.ReasonPhrase}. {detail}";
+            }
+        }
+        catch (Exception ex)
+        {
+            CloneError = ex.Message;
+        }
+        finally
+        {
+            CloneBusy = false;
+            StateHasChanged();
+        }
+    }
+
+    string FormatCompletion(decimal? pct)
+        => $"{(pct ?? 0m):0.0}%";
+
+    string FormatCost(decimal? cost)
+        => cost.HasValue ? cost.Value.ToString("C") : "—";
+
+    string FormatQuantity(decimal? value)
+        => value?.ToString("0.##") ?? "—";
+
+    string GetBuyLink(PublicBuyPlanItem item)
+    {
+        var buildId = Build?.BuildId;
+        var offering = item.OfferingId.HasValue ? $"&offeringId={item.OfferingId.Value}" : string.Empty;
+        var buildParam = buildId.HasValue ? $"&buildId={buildId.Value}" : string.Empty;
+        return $"/shop/go?partId={item.PartId}{offering}{buildParam}";
+    }
+}

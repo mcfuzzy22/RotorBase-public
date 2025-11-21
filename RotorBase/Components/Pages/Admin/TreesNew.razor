@@ -1,0 +1,341 @@
+@page "/admin/trees/new"
+@rendermode InteractiveServer
+@using System.Linq
+@using System.Net.Http.Json
+@using Microsoft.AspNetCore.Components
+@using System.Text.Json.Serialization
+@inject HttpClient Http
+@inject NavigationManager Nav
+@inject UserSession Session
+
+<h1>Admin · Create Category Tree</h1>
+
+@if (!Session.IsSignedIn)
+{
+    <div class="alert alert-info" role="alert">Sign in to create trees.</div>
+}
+else if (!Session.IsAdmin)
+{
+    <div class="alert alert-warning" role="alert">Admin access is required.</div>
+}
+else
+{
+    @if (!string.IsNullOrWhiteSpace(Error))
+    {
+        <div class="alert alert-danger" role="alert">@Error</div>
+    }
+
+    <div class="card mb-3">
+        <div class="card-body">
+            <h5 class="card-title">Tree details</h5>
+            <div class="row g-3">
+                <div class="col-md-6">
+                    <label class="form-label">Tree name</label>
+                    <input class="form-control" placeholder="e.g. engine_13B-REW" @bind="Name" />
+                </div>
+                <div class="col-md-6">
+                    <label class="form-label">Description (optional)</label>
+                    <input class="form-control" @bind="Desc" />
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="card mb-3">
+        <div class="card-body">
+            <h5 class="card-title">Apply to engine families</h5>
+            @if (Engines.Count == 0)
+            {
+                <div class="text-muted">No engine families found.</div>
+            }
+            else
+            {
+                <div class="row row-cols-2 row-cols-md-4 g-2">
+                    @foreach (var engine in Engines)
+                    {
+                        <div class="col">
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" id="ef_@engine.EngineFamilyId"
+                                       @bind="engine.Selected" @bind:after="() => OnEngineSelectionChanged(engine)" />
+                                <label class="form-check-label" for="ef_@engine.EngineFamilyId">@engine.Code</label>
+                            </div>
+                            <div class="form-check ms-4 mt-1">
+                                <input class="form-check-input" type="checkbox" id="efd_@engine.EngineFamilyId"
+                                       @bind="engine.MakeDefault" @bind:after="() => OnEngineDefaultChanged(engine)" disabled="@(!engine.Selected)" />
+                                <label class="form-check-label" for="efd_@engine.EngineFamilyId">Default</label>
+                            </div>
+                        </div>
+                    }
+                </div>
+            }
+        </div>
+    </div>
+
+    <div class="card mb-3">
+        <div class="card-body">
+            <h5 class="card-title mb-3">Add existing categories (optional)</h5>
+            <div class="row g-3">
+                <div class="col-md-6">
+                    <label class="form-label">Parent slug</label>
+                    <input class="form-control" placeholder="engine-internals" @bind="ParentSlug" />
+                    <div class="form-text">Categories will be attached beneath this parent if provided.</div>
+                </div>
+                <div class="col-md-6">
+                    <label class="form-label">Child category slugs (one per line)</label>
+                    <textarea class="form-control" rows="4" @bind="ChildSlugsText" placeholder="apex-seals&#10;rotor-housings"></textarea>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="card mb-3">
+        <div class="card-body">
+            <h5 class="card-title">Copy from template</h5>
+            <div class="form-check mb-3">
+                <input class="form-check-input" type="checkbox" id="copyToggle" @bind="DoCopy" />
+                <label class="form-check-label" for="copyToggle">Copy edges from an existing template tree after creation</label>
+            </div>
+
+            <div class="row g-3 align-items-end">
+                <div class="col-md-6">
+                    <label class="form-label">Template tree name</label>
+                    <input class="form-control" placeholder="rotary_build_v1" @bind="TemplateTreeName" disabled="@(!DoCopy)" />
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label">Copy mode</label>
+                    <select class="form-select" @bind="CopyMode" disabled="@(!DoCopy)">
+                        <option value="full">Full tree</option>
+                        <option value="subtree">Subtree only</option>
+                    </select>
+                </div>
+                <div class="col-md-2">
+                    <div class="form-check">
+                        <input class="form-check-input" type="checkbox" id="overwriteToggle" @bind="Overwrite" disabled="@(!DoCopy)" />
+                        <label class="form-check-label" for="overwriteToggle">Overwrite order</label>
+                    </div>
+                </div>
+            </div>
+
+            @if (CopyMode == "subtree")
+            {
+                <div class="row g-3 mt-1">
+                    <div class="col-md-6">
+                        <label class="form-label">Root slug</label>
+                        <input class="form-control" placeholder="engine-internals" @bind="TemplateRootSlug" disabled="@(!DoCopy)" />
+                    </div>
+                    <div class="col-md-3">
+                        <div class="form-check mt-4">
+                            <input class="form-check-input" type="checkbox" id="includeRootToggle" @bind="IncludeRoot" disabled="@(!DoCopy)" />
+                            <label class="form-check-label" for="includeRootToggle">Include root edge</label>
+                        </div>
+                    </div>
+                </div>
+            }
+        </div>
+    </div>
+
+    <div class="d-flex gap-2">
+        <button class="btn btn-primary" @onclick="CreateAsync" disabled="@Busy">@(Busy ? "Creating…" : "Create tree")</button>
+        <button class="btn btn-outline-secondary" @onclick='() => Nav.NavigateTo("/admin/trees")' disabled="@Busy">Cancel</button>
+    </div>
+}
+
+@code {
+    private string Name = string.Empty;
+    private string? Desc;
+    private string ParentSlug = "engine-internals";
+    private string ChildSlugsText = string.Empty;
+    private bool DoCopy = true;
+    private string TemplateTreeName = "rotary_build_v1";
+    private string CopyMode = "full";
+    private string TemplateRootSlug = "engine-internals";
+    private bool IncludeRoot;
+    private bool Overwrite = true;
+    private bool Busy;
+    private string? Error;
+
+    private readonly List<EnginePicker> Engines = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (Session.IsAdmin)
+        {
+            await LoadEnginesAsync();
+        }
+    }
+
+    private async Task LoadEnginesAsync()
+    {
+        try
+        {
+            var rows = await Http.GetFromJsonAsync<List<EnginePicker>>("/api/admin/engines") ?? new();
+            Engines.Clear();
+            foreach (var row in rows.OrderBy(r => r.Code, StringComparer.OrdinalIgnoreCase))
+            {
+                Engines.Add(row);
+            }
+        }
+        catch (Exception ex)
+        {
+            Error = ex.Message;
+        }
+    }
+
+    private void OnEngineSelectionChanged(EnginePicker engine)
+    {
+        if (!engine.Selected)
+        {
+            engine.MakeDefault = false;
+        }
+    }
+
+    private void OnEngineDefaultChanged(EnginePicker engine)
+    {
+        if (engine.MakeDefault)
+        {
+            engine.Selected = true;
+        }
+    }
+
+    private async Task CreateAsync()
+    {
+        if (Busy)
+        {
+            return;
+        }
+
+        var trimmedName = Name.Trim();
+        if (string.IsNullOrWhiteSpace(trimmedName))
+        {
+            Error = "Tree name is required.";
+            return;
+        }
+
+        Busy = true;
+        Error = null;
+
+        try
+        {
+            var createPayload = new
+            {
+                name = trimmedName,
+                description = string.IsNullOrWhiteSpace(Desc) ? null : Desc!.Trim()
+            };
+
+            var createResp = await Http.PostAsJsonAsync("/api/admin/trees", createPayload);
+            if (!createResp.IsSuccessStatusCode)
+            {
+                Error = await createResp.Content.ReadAsStringAsync();
+                return;
+            }
+
+            var created = await createResp.Content.ReadFromJsonAsync<CreateTreeResponse>();
+            if (created is null)
+            {
+                Error = "Tree creation failed.";
+                return;
+            }
+
+            var treeId = created.TreeId;
+
+            var selectedEngines = Engines.Where(e => e.Selected).Select(e => e.EngineFamilyId).ToArray();
+            foreach (var engineId in selectedEngines)
+            {
+                var attachResp = await Http.PostAsJsonAsync($"/api/admin/trees/{treeId}/engines/toggle", new { engine_family_id = engineId, attach = true });
+                if (!attachResp.IsSuccessStatusCode)
+                {
+                    Error = "Engine attach failed: " + await attachResp.Content.ReadAsStringAsync();
+                    return;
+                }
+            }
+
+            var childSlugs = ChildSlugsText.Replace("\r", string.Empty)
+                .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+            if (childSlugs.Length > 0 && !string.IsNullOrWhiteSpace(ParentSlug))
+            {
+                var addResp = await Http.PostAsJsonAsync($"/api/admin/trees/{treeId}/add-categories", new
+                {
+                    parent_slug = ParentSlug.Trim(),
+                    child_slugs = childSlugs,
+                    start_position = 1,
+                    overwrite = true
+                });
+                if (!addResp.IsSuccessStatusCode)
+                {
+                    Error = "Adding categories failed: " + await addResp.Content.ReadAsStringAsync();
+                    return;
+                }
+            }
+
+            if (DoCopy && !string.IsNullOrWhiteSpace(TemplateTreeName))
+            {
+                if (CopyMode == "full")
+                {
+                    var copyResp = await Http.PostAsJsonAsync("/api/admin/trees/copy/full", new
+                    {
+                        source_tree_name = TemplateTreeName.Trim(),
+                        target_tree_name = trimmedName,
+                        overwrite = Overwrite
+                    });
+                    if (!copyResp.IsSuccessStatusCode)
+                    {
+                        Error = "Copy from template failed: " + await copyResp.Content.ReadAsStringAsync();
+                        return;
+                    }
+                }
+                else
+                {
+                    var copyResp = await Http.PostAsJsonAsync("/api/admin/trees/copy-subtree", new
+                    {
+                        source_tree = TemplateTreeName.Trim(),
+                        root_slug = TemplateRootSlug.Trim(),
+                        include_root = IncludeRoot,
+                        overwrite = Overwrite,
+                        target_tree_names = new[] { trimmedName }
+                    });
+                    if (!copyResp.IsSuccessStatusCode)
+                    {
+                        Error = "Copy from template failed: " + await copyResp.Content.ReadAsStringAsync();
+                        return;
+                    }
+                }
+            }
+
+            var defaultIds = Engines.Where(e => e.Selected && e.MakeDefault).Select(e => e.EngineFamilyId).ToArray();
+            if (defaultIds.Length > 0)
+            {
+                var defaultResp = await Http.PostAsJsonAsync($"/api/admin/trees/{treeId}/engines/default/batch", new { engine_family_ids = defaultIds });
+                if (!defaultResp.IsSuccessStatusCode)
+                {
+                    Error = "Setting defaults failed: " + await defaultResp.Content.ReadAsStringAsync();
+                    return;
+                }
+            }
+
+            Nav.NavigateTo("/admin/trees");
+        }
+        catch (Exception ex)
+        {
+            Error = ex.Message;
+        }
+        finally
+        {
+            Busy = false;
+        }
+    }
+
+    private sealed class EnginePicker
+    {
+        [JsonPropertyName("engine_family_id")] public long EngineFamilyId { get; set; }
+        [JsonPropertyName("code")] public string Code { get; set; } = string.Empty;
+        public bool Selected { get; set; }
+        public bool MakeDefault { get; set; }
+    }
+
+    private sealed class CreateTreeResponse
+    {
+        [JsonPropertyName("tree_id")] public long TreeId { get; set; }
+        [JsonPropertyName("name")] public string? Name { get; set; }
+    }
+}

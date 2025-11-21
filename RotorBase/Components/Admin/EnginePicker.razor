@@ -1,0 +1,125 @@
+@inject HttpClient Http
+
+<div class="input-group">
+    <input class="form-control" placeholder="Search engine code…" value="@_query" @oninput="OnQueryChanged" />
+    <button class="btn btn-outline-secondary" type="button" @onclick="FilterAsync">Search</button>
+</div>
+
+@if (!string.IsNullOrEmpty(_error))
+{
+    <div class="text-danger small mt-1">@_error</div>
+}
+
+@if (_filtered.Count > 0)
+{
+    <div class="list-group mt-2" style="max-height: 220px; overflow-y: auto;">
+        @foreach (var engine in _filtered)
+        {
+            <button type="button" class="list-group-item list-group-item-action"
+                    @onclick="() => ToggleAsync(engine.Code)">
+                <div class="fw-semibold">@engine.Code</div>
+                <div class="text-muted small">@engine.RotorCountText</div>
+            </button>
+        }
+    </div>
+}
+else if (!string.IsNullOrEmpty(_query) && string.IsNullOrEmpty(_error))
+{
+    <div class="text-muted small mt-2">No engines matched.</div>
+}
+
+@if (EngineCodes?.Count > 0)
+{
+    <div class="mt-2">
+        @foreach (var code in EngineCodes)
+        {
+            <span class="badge bg-light text-dark me-1 mb-1">
+                <span class="fw-semibold">@(code)</span>
+                <button class="btn-close btn-close-white ms-1" style="font-size: .65rem" type="button" @onclick="() => RemoveAsync(code)"></button>
+            </span>
+        }
+    </div>
+}
+
+@code {
+    private string _query = string.Empty;
+    private readonly List<EngineResult> _all = new();
+    private readonly List<EngineResult> _filtered = new();
+    private string? _error;
+
+    [Parameter] public List<string> EngineCodes { get; set; } = new();
+    [Parameter] public EventCallback<List<string>> EngineCodesChanged { get; set; }
+
+    private record EngineResult(long EngineFamilyId, string Code, int? RotorCount)
+    {
+        public string RotorCountText => RotorCount is null ? "" : $"{RotorCount} rotor" + (RotorCount == 1 ? string.Empty : "s");
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            _error = null;
+            var rows = await Http.GetFromJsonAsync<List<EngineResult>>("/api/admin/engines") ?? new();
+            _all.Clear();
+            _all.AddRange(rows);
+            _filtered.Clear();
+            _filtered.AddRange(_all);
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+    }
+
+    private async Task OnQueryChanged(ChangeEventArgs args)
+    {
+        _query = args.Value?.ToString() ?? string.Empty;
+        await FilterAsync();
+    }
+
+    private Task FilterAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_query))
+        {
+            _filtered.Clear();
+            _filtered.AddRange(_all.Take(200));
+            return Task.CompletedTask;
+        }
+
+        var lowered = _query.Trim().ToLowerInvariant();
+        _filtered.Clear();
+        _filtered.AddRange(_all.Where(e => e.Code.ToLowerInvariant().Contains(lowered)).Take(200));
+        return Task.CompletedTask;
+    }
+
+    private async Task ToggleAsync(string code)
+    {
+        var updated = EngineCodes?.ToList() ?? new List<string>();
+        if (updated.Contains(code, StringComparer.OrdinalIgnoreCase))
+        {
+            updated.RemoveAll(x => string.Equals(x, code, StringComparison.OrdinalIgnoreCase));
+        }
+        else
+        {
+            updated.Add(code);
+        }
+
+        EngineCodes = updated;
+        if (EngineCodesChanged.HasDelegate)
+        {
+            await EngineCodesChanged.InvokeAsync(updated);
+        }
+    }
+
+    private async Task RemoveAsync(string code)
+    {
+        var updated = EngineCodes?.ToList() ?? new List<string>();
+        updated.RemoveAll(x => string.Equals(x, code, StringComparison.OrdinalIgnoreCase));
+        EngineCodes = updated;
+        if (EngineCodesChanged.HasDelegate)
+        {
+            await EngineCodesChanged.InvokeAsync(updated);
+        }
+    }
+}

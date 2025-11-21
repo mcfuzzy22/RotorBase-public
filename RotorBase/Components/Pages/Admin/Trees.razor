@@ -1,0 +1,971 @@
+@page "/admin/trees"
+@rendermode InteractiveServer
+@using System.Net.Http.Json
+@using System.Linq
+@using System.Text.Json.Serialization
+@using Microsoft.AspNetCore.Components
+@using RotorBase
+@inject HttpClient Http
+@inject UserSession Session
+@inject NavigationManager Nav
+
+<h1 class="text-2xl font-semibold tracking-tight mb-4">Admin · Category Trees</h1>
+
+@if (!Session.IsSignedIn)
+{
+    <div role="alert" class="rounded-md border border-blue-200 bg-blue-50 text-blue-800 px-3 py-2 text-sm">Sign in to manage trees.</div>
+}
+else if (!Session.IsAdmin)
+{
+    <div role="alert" class="rounded-md border border-amber-200 bg-amber-50 text-amber-800 px-3 py-2 text-sm">Admin access is required.</div>
+}
+else
+{
+    <div class="mb-3 rounded-xl border border-gray-200 bg-white shadow-sm">
+        <div class="p-4">
+            <div class="grid grid-cols-1 md:grid-cols-12 gap-3 items-end">
+                <div class="md:col-span-5">
+                    <label class="text-sm font-medium text-gray-700">Engine tree</label>
+                    <select class="mt-1 w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" @bind="_selectedTreeId" @bind:after="TreeSelectionChanged">
+                        <option value="">Select a tree…</option>
+                        @foreach (var tree in _trees)
+                        {
+                            <option value="@tree.TreeId">@tree.Name</option>
+                        }
+                    </select>
+                </div>
+                <div class="md:col-span-7 flex flex-wrap md:justify-end gap-2">
+                    <button class="inline-flex items-center rounded-md bg-indigo-600 px-3 py-2 text-sm font-semibold text-white shadow-sm hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500" @onclick='() => Nav.NavigateTo("/admin/trees/new")'>Create tree</button>
+                    <button class="inline-flex items-center rounded-md border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-50" @onclick="LoadTreesAsync" disabled="@_loading">Refresh</button>
+                    <button class="inline-flex items-center rounded-md border border-indigo-300 bg-indigo-50 px-3 py-2 text-sm font-medium text-indigo-700 hover:bg-indigo-100 focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-50" @onclick="OpenCopyModal" disabled="@(!_trees.Any())">Copy subtree…</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    @if (!_loading && _selectedTreeId is not null)
+    {
+        <div class="mb-3 rounded-xl border border-gray-200 bg-white shadow-sm">
+            <div class="p-4">
+                <div class="mb-2 flex items-center justify-between">
+                    <h5 class="m-0 text-base font-semibold text-gray-800">Engine mappings</h5>
+                    <button class="inline-flex items-center rounded-md border border-gray-300 bg-white px-2.5 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-50" @onclick="async () => await LoadEngineStatusAsync()" disabled="@_loadingEngines">Refresh</button>
+                </div>
+                @if (!string.IsNullOrWhiteSpace(_engineError))
+                {
+                    <div role="alert" class="rounded-md border border-red-200 bg-red-50 text-red-800 px-3 py-2 text-sm">@_engineError</div>
+                }
+                else if (_loadingEngines)
+                {
+                    <div class="flex items-center gap-2 text-sm text-gray-600">
+                        <div class="h-4 w-4 animate-spin rounded-full border-2 border-gray-300 border-t-transparent"></div>
+                        <span>Loading engines…</span>
+                    </div>
+                }
+                else if (_engineStatus.Count == 0)
+                {
+                    <div class="text-sm text-gray-500">No engine families available.</div>
+                }
+                else
+                {
+                    <div class="grid grid-cols-2 md:grid-cols-4 gap-2">
+                        @foreach (var engine in _engineStatus)
+                        {
+                            <div class="rounded-md border border-gray-200 p-2">
+                                <label class="flex items-center gap-2 text-sm">
+                                    <input class="h-4 w-4" type="checkbox" id="efm_@engine.EngineFamilyId" checked="@engine.Attached" @onchange="async args => await ToggleEngineAttachAsync(engine, args)">
+                                    <span class="font-medium">@engine.Code</span>
+                                </label>
+                                <label class="mt-1 ml-6 flex items-center gap-2 text-xs text-gray-700">
+                                    <input class="h-4 w-4" type="checkbox" id="efd_@engine.EngineFamilyId" checked="@engine.IsDefault" disabled="@(!engine.Attached)" @onchange="async args => await SetEngineDefaultAsync(engine, args)">
+                                    <span>Default</span>
+                                </label>
+                            </div>
+                        }
+                    </div>
+                }
+            </div>
+        </div>
+    }
+
+    @if (_loading)
+    {
+        <div class="flex items-center gap-2 text-sm text-gray-600">
+            <div class="h-5 w-5 animate-spin rounded-full border-2 border-gray-300 border-t-transparent"></div>
+            <span>Loading trees…</span>
+        </div>
+    }
+    else if (_selectedTreeId is null)
+    {
+        <div role="alert" class="rounded-md border border-gray-200 bg-gray-50 text-gray-700 px-3 py-2 text-sm">Pick an engine tree to inspect its categories.</div>
+    }
+    else if (_loadingEdges)
+    {
+        <div class="flex items-center gap-2 text-sm text-gray-600">
+            <div class="h-5 w-5 animate-spin rounded-full border-2 border-gray-300 border-t-transparent"></div>
+            <span>Loading edges…</span>
+        </div>
+    }
+    else if (_edges.Count == 0)
+    {
+        <div role="alert" class="rounded-md border border-gray-200 bg-gray-50 text-gray-700 px-3 py-2 text-sm">No edges are defined for this tree yet.</div>
+    }
+    else
+    {
+        @if (!string.IsNullOrWhiteSpace(_error))
+        {
+            <div role="alert" class="mb-3 rounded-md border border-red-200 bg-red-50 text-red-800 px-3 py-2 text-sm">@_error</div>
+        }
+
+        foreach (var parent in RootParents())
+        {
+            <div class="mb-4">
+                <div class="flex items-center gap-2">
+                    <h5 class="m-0 text-base font-semibold">@DisplayName(parent.Name, parent.Slug)</h5>
+                    <span class="text-sm text-gray-500">@parent.Slug</span>
+                    <button class="inline-flex items-center rounded-md border border-indigo-300 bg-indigo-50 px-2.5 py-1.5 text-xs font-medium text-indigo-700 hover:bg-indigo-100 focus:outline-none focus:ring-2 focus:ring-indigo-500" @onclick="() => OpenAddModal(parent.CategoryId, parent.Slug, parent.Name)">Add child</button>
+                </div>
+                <ul class="ml-4 mt-2 space-y-1">
+                    @RenderChildren(parent.CategoryId)
+                </ul>
+            </div>
+        }
+    }
+}
+
+@if (_showAddModal)
+{
+    <div class="fixed inset-0 z-40 bg-black/50"></div>
+    <div class="fixed inset-0 z-50 flex items-center justify-center p-4">
+        <div class="w-full max-w-md rounded-xl border border-gray-200 bg-white shadow-xl">
+            <div class="flex items-center justify-between border-b border-gray-200 px-4 py-3">
+                <h5 class="text-sm font-semibold">Add child to @DisplayName(_addParentName, _addParentSlug)</h5>
+                <button type="button" class="inline-flex h-8 w-8 items-center justify-center rounded-md border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 disabled:opacity-50" aria-label="Close" @onclick="CloseAddModal" disabled="@_adding">✕</button>
+            </div>
+            <div class="px-4 py-3">
+                <label class="text-sm font-medium text-gray-700">Child category slug</label>
+                <input class="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="apex-seals" @bind="_addChildSlug" />
+                <div class="mt-1 text-xs text-gray-500">Slug must already exist in <code>Category</code>.</div>
+                @if (!string.IsNullOrWhiteSpace(_addError))
+                {
+                    <div role="alert" class="mt-2 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">@_addError</div>
+                }
+            </div>
+            <div class="flex items-center justify-end gap-2 border-t border-gray-200 px-4 py-3">
+                <button class="inline-flex items-center rounded-md border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-50" @onclick="CloseAddModal" disabled="@_adding">Cancel</button>
+                <button class="inline-flex items-center rounded-md bg-indigo-600 px-3 py-2 text-sm font-semibold text-white shadow-sm hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-50" @onclick="AddChildAsync" disabled="@_adding">@(_adding ? "Saving…" : "Add")</button>
+            </div>
+        </div>
+    </div>
+}
+
+@if (_showMoveModal && _moveEdge is not null)
+{
+    <div class="fixed inset-0 z-40 bg-black/50"></div>
+    <div class="fixed inset-0 z-50 flex items-center justify-center p-4">
+        <div class="w-full max-w-md rounded-xl border border-gray-200 bg-white shadow-xl">
+            <div class="flex items-center justify-between border-b border-gray-200 px-4 py-3">
+                <h5 class="text-sm font-semibold">Move @DisplayName(_moveEdge.ChildName, _moveEdge.ChildSlug)</h5>
+                <button type="button" class="inline-flex h-8 w-8 items-center justify-center rounded-md border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 disabled:opacity-50" aria-label="Close" @onclick="CloseMoveModal" disabled="@_moving">✕</button>
+            </div>
+            <div class="px-4 py-3">
+                <div class="mb-3">
+                    <label class="text-sm font-medium text-gray-700">New parent</label>
+                    <select class="mt-1 w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" @bind="_moveParentId">
+                        @foreach (var parent in _moveParents)
+                        {
+                            <option value="@parent.CategoryId">@DisplayName(parent.Name, parent.Slug)</option>
+                        }
+                    </select>
+                </div>
+                <div class="mb-3">
+                    <label class="text-sm font-medium text-gray-700">Position</label>
+                    <input type="number" class="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" @bind="_movePosition" />
+                    <div class="mt-1 text-xs text-gray-500">0 = auto, or enter a sibling order.</div>
+                </div>
+                @if (!string.IsNullOrWhiteSpace(_moveError))
+                {
+                    <div role="alert" class="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">@_moveError</div>
+                }
+            </div>
+            <div class="flex items-center justify-end gap-2 border-t border-gray-200 px-4 py-3">
+                <button class="inline-flex items-center rounded-md border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-50" @onclick="CloseMoveModal" disabled="@_moving">Cancel</button>
+                <button class="inline-flex items-center rounded-md bg-indigo-600 px-3 py-2 text-sm font-semibold text-white shadow-sm hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-50" @onclick="ApplyMoveAsync" disabled="@_moving || _moveParentId == 0">@(_moving ? "Moving…" : "Move")</button>
+            </div>
+        </div>
+    </div>
+}
+
+@if (_showCopyModal)
+{
+    <div class="fixed inset-0 z-40 bg-black/50"></div>
+    <div class="fixed inset-0 z-50 flex items-center justify-center p-4">
+        <div class="w-full max-w-3xl rounded-xl border border-gray-200 bg-white shadow-xl">
+            <div class="flex items-center justify-between border-b border-gray-200 px-4 py-3">
+                <h5 class="text-sm font-semibold">Copy subtree</h5>
+                <button type="button" class="inline-flex h-8 w-8 items-center justify-center rounded-md border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 disabled:opacity-50" aria-label="Close" @onclick="CloseCopyModal" disabled="@_copyBusy">✕</button>
+            </div>
+            <div class="px-4 py-3">
+                <div class="grid grid-cols-1 md:grid-cols-12 gap-3">
+                    <div class="md:col-span-6">
+                        <label class="text-sm font-medium text-gray-700">Source tree</label>
+                        <input class="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="engine_template_13B" @bind="_copySourceTree" />
+                    </div>
+                    <div class="md:col-span-6">
+                        <label class="text-sm font-medium text-gray-700">Root category slug</label>
+                        <input class="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="engine-internals" @bind="_copyRootSlug" />
+                    </div>
+                    <div class="md:col-span-4">
+                        <label class="mt-4 inline-flex items-center gap-2 text-sm text-gray-700">
+                            <input class="h-4 w-4" type="checkbox" id="copyIncludeRoot" @bind="_copyIncludeRoot" />
+                            <span>Include root edge</span>
+                        </label>
+                    </div>
+                    <div class="md:col-span-4">
+                        <label class="mt-4 inline-flex items-center gap-2 text-sm text-gray-700">
+                            <input class="h-4 w-4" type="checkbox" id="copyOverwrite" @bind="_copyOverwrite" />
+                            <span>Overwrite positions</span>
+                        </label>
+                    </div>
+                    <div class="md:col-span-12">
+                        <label class="text-sm font-medium text-gray-700">Target trees (one per line)</label>
+                        <textarea rows="3" class="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" @bind="_copyTargets"></textarea>
+                        <div class="mt-1 text-xs text-gray-500">Example: <code>engine_13B-REW-S6</code></div>
+                    </div>
+                </div>
+
+                @if (!string.IsNullOrWhiteSpace(_copyError))
+                {
+                    <div role="alert" class="mt-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">@_copyError</div>
+                }
+
+                @if (_copyPreview is not null)
+                {
+                    <hr class="my-3" />
+                    <div class="text-xs text-gray-700">
+                        <strong>Edges:</strong> @_copyPreview.Edges.Count<br />
+                        <ul class="mb-2 list-disc pl-5">
+                            @foreach (var edge in _copyPreview.Edges.Take(10))
+                            {
+                                <li>@edge.ParentSlug → @edge.ChildSlug (@edge.Position)</li>
+                            }
+                            @if (_copyPreview.Edges.Count > 10)
+                            {
+                                <li>… (@(_copyPreview.Edges.Count - 10) more)</li>
+                            }
+                        </ul>
+                        <strong>Targets:</strong>
+                        <ul class="mb-0 list-disc pl-5">
+                            @foreach (var target in _copyPreview.Targets)
+                            {
+                                <li>@target.Tree — new: <strong>@target.NewEdges</strong> / @target.TotalEdges @(target.TreeMissing ? "(missing)" : string.Empty)</li>
+                            }
+                        </ul>
+                    </div>
+                }
+            </div>
+            <div class="flex items-center justify-end gap-2 border-t border-gray-200 px-4 py-3">
+                <button class="inline-flex items-center rounded-md border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-50" @onclick="CloseCopyModal" disabled="@_copyBusy">Close</button>
+                <button class="inline-flex items-center rounded-md border border-indigo-300 bg-indigo-50 px-3 py-2 text-sm font-medium text-indigo-700 hover:bg-indigo-100 focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-50" @onclick="PreviewCopyAsync" disabled="@_copyBusy">@(_copyBusy ? "Previewing…" : "Preview")</button>
+                <button class="inline-flex items-center rounded-md bg-indigo-600 px-3 py-2 text-sm font-semibold text-white shadow-sm hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-50" @onclick="ApplyCopyAsync" disabled="@_copyBusy || _copyPreview is null">@(_copyBusy ? "Applying…" : "Apply")</button>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private readonly List<TreeRow> _trees = new();
+    private readonly List<TreeEdge> _edges = new();
+    private readonly List<EngineStatusVM> _engineStatus = new();
+    private Dictionary<long, List<TreeEdge>> _childrenByParent = new();
+    private bool _loading;
+    private bool _loadingEdges;
+    private bool _loadingEngines;
+    private long? _selectedTreeId;
+    private string? _error;
+    private string? _engineError;
+
+    private bool _showAddModal;
+    private long _addParentId;
+    private string? _addParentSlug;
+    private string? _addParentName;
+    private string _addChildSlug = string.Empty;
+    private bool _adding;
+    private string? _addError;
+
+    private bool _showMoveModal;
+    private TreeEdge? _moveEdge;
+    private readonly List<ParentOption> _moveParents = new();
+    private long _moveParentId;
+    private int _movePosition;
+    private bool _moving;
+    private string? _moveError;
+
+    private bool _showCopyModal;
+    private string _copySourceTree = string.Empty;
+    private string _copyRootSlug = string.Empty;
+    private string _copyTargets = string.Empty;
+    private bool _copyIncludeRoot;
+    private bool _copyOverwrite = true;
+    private bool _copyBusy;
+    private string? _copyError;
+    private CopyPreviewResponse? _copyPreview;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadTreesAsync();
+    }
+
+    private async Task LoadTreesAsync()
+    {
+        if (!Session.IsAdmin) return;
+        _loading = true;
+        _error = null;
+        try
+        {
+            _trees.Clear();
+            var rows = await Http.GetFromJsonAsync<List<TreeRow>>("/api/admin/trees") ?? new();
+            _trees.AddRange(rows);
+
+            if (_selectedTreeId is null || !_trees.Any(t => t.TreeId == _selectedTreeId))
+            {
+                _selectedTreeId = _trees.FirstOrDefault()?.TreeId;
+            }
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _loading = false;
+        }
+
+        if (_selectedTreeId is not null)
+        {
+            await LoadEdgesAsync();
+            await LoadEngineStatusAsync();
+        }
+        else
+        {
+            _engineStatus.Clear();
+        }
+    }
+
+    private async Task TreeSelectionChanged()
+    {
+        if (_selectedTreeId is null)
+        {
+            _edges.Clear();
+            _childrenByParent.Clear();
+            _engineStatus.Clear();
+            return;
+        }
+
+        await LoadEdgesAsync();
+        await LoadEngineStatusAsync();
+    }
+
+    private async Task LoadEdgesAsync()
+    {
+        if (!Session.IsAdmin || _selectedTreeId is null) return;
+        _loadingEdges = true;
+        _error = null;
+        try
+        {
+            _edges.Clear();
+            var url = $"/api/admin/trees/{_selectedTreeId}/edges";
+            var rows = await Http.GetFromJsonAsync<List<TreeEdge>>(url) ?? new();
+            foreach (var row in rows.OrderBy(r => r.ParentCategoryId).ThenBy(r => r.Position))
+            {
+                _edges.Add(row);
+            }
+
+            RebuildChildrenIndex();
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+            _edges.Clear();
+            _childrenByParent.Clear();
+        }
+        finally
+        {
+            _loadingEdges = false;
+        }
+    }
+
+    private async Task LoadEngineStatusAsync()
+    {
+        if (!Session.IsAdmin || _selectedTreeId is null)
+        {
+            _engineStatus.Clear();
+            return;
+        }
+
+        _loadingEngines = true;
+        _engineError = null;
+        try
+        {
+            var url = $"/api/admin/trees/{_selectedTreeId}/engines";
+            var rows = await Http.GetFromJsonAsync<List<EngineStatusVM>>(url) ?? new();
+            _engineStatus.Clear();
+            foreach (var row in rows.OrderBy(r => r.Code, StringComparer.OrdinalIgnoreCase))
+            {
+                _engineStatus.Add(row);
+            }
+        }
+        catch (Exception ex)
+        {
+            _engineError = ex.Message;
+            _engineStatus.Clear();
+        }
+        finally
+        {
+            _loadingEngines = false;
+        }
+    }
+
+    private async Task ToggleEngineAttachAsync(EngineStatusVM engine, ChangeEventArgs args)
+    {
+        if (!Session.IsAdmin || _selectedTreeId is null) return;
+
+        var attach = args.Value switch
+        {
+            bool b => b,
+            string s => string.Equals(s, "on", StringComparison.OrdinalIgnoreCase),
+            _ => false
+        };
+
+        string? error = null;
+        try
+        {
+            var resp = await Http.PostAsJsonAsync($"/api/admin/trees/{_selectedTreeId}/engines/toggle", new { engine_family_id = engine.EngineFamilyId, attach });
+            if (!resp.IsSuccessStatusCode)
+            {
+                error = await resp.Content.ReadAsStringAsync();
+            }
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+        }
+
+        await LoadEngineStatusAsync();
+
+        if (!string.IsNullOrWhiteSpace(error))
+        {
+            _engineError = error;
+        }
+    }
+
+    private async Task SetEngineDefaultAsync(EngineStatusVM engine, ChangeEventArgs args)
+    {
+        if (!Session.IsAdmin || _selectedTreeId is null) return;
+
+        var makeDefault = args.Value switch
+        {
+            bool b => b,
+            string s => string.Equals(s, "on", StringComparison.OrdinalIgnoreCase),
+            _ => false
+        };
+
+        if (!makeDefault)
+        {
+            return;
+        }
+
+        string? error = null;
+        try
+        {
+            var resp = await Http.PostAsJsonAsync($"/api/admin/trees/{_selectedTreeId}/engines/default", new { engine_family_id = engine.EngineFamilyId });
+            if (!resp.IsSuccessStatusCode)
+            {
+                error = await resp.Content.ReadAsStringAsync();
+            }
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+        }
+
+        await LoadEngineStatusAsync();
+
+        if (!string.IsNullOrWhiteSpace(error))
+        {
+            _engineError = error;
+        }
+    }
+
+    private void RebuildChildrenIndex()
+    {
+        _childrenByParent = _edges
+            .GroupBy(e => e.ParentCategoryId)
+            .ToDictionary(g => g.Key, g => g.OrderBy(e => e.Position).ThenBy(e => e.ChildName ?? e.ChildSlug).ToList());
+    }
+
+    private IEnumerable<TreeParent> RootParents()
+    {
+        var parentIds = _edges.Select(e => e.ParentCategoryId).Distinct().ToList();
+        var childIds = _edges.Select(e => e.ChildCategoryId).ToHashSet();
+        var roots = parentIds.Where(id => !childIds.Contains(id)).ToList();
+        if (roots.Count == 0)
+        {
+            roots = parentIds;
+        }
+
+        foreach (var parentId in roots.Distinct())
+        {
+            var exemplar = _edges.FirstOrDefault(e => e.ParentCategoryId == parentId);
+            yield return new TreeParent
+            {
+                CategoryId = parentId,
+                Name = exemplar?.ParentName,
+                Slug = exemplar?.ParentSlug
+            };
+        }
+    }
+
+    private RenderFragment RenderChildren(long parentId) => builder =>
+    {
+        if (!_childrenByParent.TryGetValue(parentId, out var children) || children.Count == 0)
+        {
+            return;
+        }
+
+        foreach (var child in children)
+        {
+            var hasChildren = _childrenByParent.ContainsKey(child.ChildCategoryId);
+            var seq = 0;
+            builder.OpenElement(seq++, "li");
+            builder.OpenElement(seq++, "div");
+            builder.AddAttribute(seq++, "class", "flex items-center gap-2 mb-1");
+            builder.AddContent(seq++, DisplayName(child.ChildName, child.ChildSlug));
+            builder.OpenElement(seq++, "span");
+            builder.AddAttribute(seq++, "class", "inline-flex items-center rounded-full bg-gray-100 text-gray-700 border border-gray-200 px-2 py-0.5 text-[11px]");
+            builder.AddContent(seq++, child.Position);
+            builder.CloseElement();
+            builder.OpenElement(seq++, "div");
+            builder.AddAttribute(seq++, "class", "ml-2 inline-flex items-center gap-1");
+
+            builder.OpenElement(seq++, "button");
+            builder.AddAttribute(seq++, "class", "inline-flex items-center rounded-md border border-indigo-300 bg-indigo-50 px-2.5 py-1 text-xs font-medium text-indigo-700 hover:bg-indigo-100");
+            builder.AddAttribute(seq++, "onclick", EventCallback.Factory.Create(this, () => OpenAddModal(child.ChildCategoryId, child.ChildSlug, child.ChildName)));
+            builder.AddContent(seq++, "Add child");
+            builder.CloseElement();
+
+            builder.OpenElement(seq++, "button");
+            builder.AddAttribute(seq++, "class", "inline-flex items-center rounded-md border border-gray-300 bg-white px-2.5 py-1 text-xs font-medium text-gray-700 hover:bg-gray-50");
+            builder.AddAttribute(seq++, "onclick", EventCallback.Factory.Create(this, () => OpenMoveModal(child)));
+            builder.AddContent(seq++, "Move");
+            builder.CloseElement();
+
+            builder.OpenElement(seq++, "button");
+            builder.AddAttribute(seq++, "class", "inline-flex items-center rounded-md border border-gray-300 bg-white px-2.5 py-1 text-xs font-medium text-gray-700 hover:bg-gray-50");
+            builder.AddAttribute(seq++, "onclick", EventCallback.Factory.Create(this, () => MoveSiblingAsync(child, -1)));
+            builder.AddContent(seq++, "↑");
+            builder.CloseElement();
+
+            builder.OpenElement(seq++, "button");
+            builder.AddAttribute(seq++, "class", "inline-flex items-center rounded-md border border-gray-300 bg-white px-2.5 py-1 text-xs font-medium text-gray-700 hover:bg-gray-50");
+            builder.AddAttribute(seq++, "onclick", EventCallback.Factory.Create(this, () => MoveSiblingAsync(child, 1)));
+            builder.AddContent(seq++, "↓");
+            builder.CloseElement();
+
+            builder.OpenElement(seq++, "button");
+            builder.AddAttribute(seq++, "class", "inline-flex items-center rounded-md border border-red-300 bg-white px-2.5 py-1 text-xs font-medium text-red-700 hover:bg-red-50");
+            builder.AddAttribute(seq++, "onclick", EventCallback.Factory.Create(this, () => DetachAsync(child)));
+            builder.AddContent(seq++, "Detach");
+            builder.CloseElement();
+
+            builder.CloseElement();
+            builder.CloseElement();
+
+            if (hasChildren)
+            {
+                builder.OpenElement(seq++, "ul");
+                builder.AddAttribute(seq++, "class", "ml-4 space-y-1");
+                builder.AddContent(seq++, RenderChildren(child.ChildCategoryId));
+                builder.CloseElement();
+            }
+
+            builder.CloseElement();
+        }
+    };
+
+    private static string DisplayName(string? name, string? slug)
+        => !string.IsNullOrWhiteSpace(name) ? name! : (!string.IsNullOrWhiteSpace(slug) ? slug! : "(unnamed)");
+
+    private void OpenAddModal(long parentId, string? parentSlug, string? parentName)
+    {
+        _addParentId = parentId;
+        _addParentSlug = parentSlug;
+        _addParentName = parentName;
+        _addChildSlug = string.Empty;
+        _addError = null;
+        _showAddModal = true;
+    }
+
+    private void CloseAddModal()
+    {
+        if (_adding) return;
+        _showAddModal = false;
+        _addError = null;
+    }
+
+    private async Task AddChildAsync()
+    {
+        if (!Session.IsAdmin || _selectedTreeId is null) return;
+        if (string.IsNullOrWhiteSpace(_addParentSlug))
+        {
+            _addError = "Parent slug is unavailable for this node.";
+            return;
+        }
+
+        var childSlug = _addChildSlug?.Trim().ToLowerInvariant();
+        if (string.IsNullOrWhiteSpace(childSlug))
+        {
+            _addError = "Enter a child slug.";
+            return;
+        }
+
+        _adding = true;
+        _addError = null;
+        try
+        {
+            var payload = new AdminTreeEdgeRequest
+            {
+                ParentSlug = _addParentSlug!,
+                ChildSlug = childSlug
+            };
+
+            var resp = await Http.PostAsJsonAsync($"/api/admin/trees/{_selectedTreeId}/edges", payload);
+            if (resp.IsSuccessStatusCode)
+            {
+                _showAddModal = false;
+                await LoadEdgesAsync();
+            }
+            else
+            {
+                _addError = await resp.Content.ReadAsStringAsync();
+            }
+        }
+        catch (Exception ex)
+        {
+            _addError = ex.Message;
+        }
+        finally
+        {
+            _adding = false;
+        }
+    }
+
+    private void OpenMoveModal(TreeEdge edge)
+    {
+        _moveEdge = edge;
+        _moveParents.Clear();
+        _moveParentId = 0;
+        _movePosition = edge.Position;
+        _moveError = null;
+        _showMoveModal = true;
+        _ = LoadValidParentsAsync();
+    }
+
+    private void CloseMoveModal()
+    {
+        if (_moving) return;
+        _showMoveModal = false;
+        _moveEdge = null;
+        _moveParents.Clear();
+    }
+
+    private async Task LoadValidParentsAsync()
+    {
+        if (!Session.IsAdmin || _selectedTreeId is null || _moveEdge is null) return;
+
+        try
+        {
+            var url = $"/api/admin/trees/{_selectedTreeId}/nodes/{_moveEdge.ChildCategoryId}/valid-parents";
+            var rows = await Http.GetFromJsonAsync<List<ParentOption>>(url) ?? new();
+            _moveParents.Clear();
+            foreach (var row in rows)
+            {
+                _moveParents.Add(row);
+            }
+
+            _moveParentId = _moveParents.FirstOrDefault()?.CategoryId ?? 0;
+        }
+        catch (Exception ex)
+        {
+            _moveError = ex.Message;
+        }
+
+        StateHasChanged();
+    }
+
+    private async Task ApplyMoveAsync()
+    {
+        if (!Session.IsAdmin || _selectedTreeId is null || _moveEdge is null) return;
+        if (_moveParentId == 0)
+        {
+            _moveError = "Choose a new parent.";
+            return;
+        }
+
+        _moving = true;
+        _moveError = null;
+        try
+        {
+            var payload = new AdminTreeMoveRequest
+            {
+                ChildCategoryId = _moveEdge.ChildCategoryId,
+                CurrentParentCategoryId = _moveEdge.ParentCategoryId,
+                NewParentCategoryId = _moveParentId,
+                Position = _movePosition
+            };
+
+            var resp = await Http.PatchAsJsonAsync($"/api/admin/trees/{_selectedTreeId}/edges/move", payload);
+            if (resp.IsSuccessStatusCode)
+            {
+                _showMoveModal = false;
+                await LoadEdgesAsync();
+            }
+            else
+            {
+                _moveError = await resp.Content.ReadAsStringAsync();
+            }
+        }
+        catch (Exception ex)
+        {
+            _moveError = ex.Message;
+        }
+        finally
+        {
+            _moving = false;
+        }
+    }
+
+    private async Task MoveSiblingAsync(TreeEdge edge, int direction)
+    {
+        if (!Session.IsAdmin || _selectedTreeId is null) return;
+        if (!_childrenByParent.TryGetValue(edge.ParentCategoryId, out var siblings)) return;
+
+        var ordered = siblings.ToList();
+        var index = ordered.FindIndex(e => e.ChildCategoryId == edge.ChildCategoryId);
+        if (index < 0) return;
+
+        var newIndex = index + direction;
+        if (newIndex < 0 || newIndex >= ordered.Count) return;
+
+        (ordered[index], ordered[newIndex]) = (ordered[newIndex], ordered[index]);
+
+        var payload = new AdminTreeReorderRequest
+        {
+            ParentCategoryId = edge.ParentCategoryId,
+            ChildIds = ordered.Select(e => e.ChildCategoryId).ToList()
+        };
+
+        try
+        {
+            var resp = await Http.PostAsJsonAsync($"/api/admin/trees/{_selectedTreeId}/reorder", payload);
+            if (resp.IsSuccessStatusCode)
+            {
+                await LoadEdgesAsync();
+            }
+        }
+        catch
+        {
+            // Ignore for now; UI will refresh next load.
+        }
+    }
+
+    private async Task DetachAsync(TreeEdge edge)
+    {
+        if (!Session.IsAdmin || _selectedTreeId is null) return;
+
+        try
+        {
+            var resp = await Http.DeleteAsync($"/api/admin/trees/{_selectedTreeId}/edges/{edge.ParentCategoryId}/{edge.ChildCategoryId}");
+            if (resp.IsSuccessStatusCode)
+            {
+                await LoadEdgesAsync();
+            }
+        }
+        catch
+        {
+            // ignored
+        }
+    }
+
+    private void OpenCopyModal()
+    {
+        _copySourceTree = string.Empty;
+        _copyRootSlug = string.Empty;
+        _copyTargets = string.Empty;
+        _copyIncludeRoot = false;
+        _copyOverwrite = true;
+        _copyPreview = null;
+        _copyError = null;
+        _showCopyModal = true;
+
+        if (_selectedTreeId is not null)
+        {
+            var current = _trees.FirstOrDefault(t => t.TreeId == _selectedTreeId);
+            if (current is not null)
+            {
+                _copyTargets = current.Name;
+            }
+        }
+    }
+
+    private void CloseCopyModal()
+    {
+        if (_copyBusy) return;
+        _showCopyModal = false;
+        _copyPreview = null;
+        _copyError = null;
+    }
+
+    private async Task PreviewCopyAsync()
+    {
+        if (!Session.IsAdmin) return;
+
+        _copyBusy = true;
+        _copyError = null;
+        _copyPreview = null;
+        try
+        {
+            var targets = string.Join(',', ParseTargets());
+            var url = $"/api/admin/trees/copy-subtree/preview?sourceTree={Uri.EscapeDataString(_copySourceTree ?? string.Empty)}&rootSlug={Uri.EscapeDataString(_copyRootSlug ?? string.Empty)}&targets={Uri.EscapeDataString(targets)}&includeRoot={_copyIncludeRoot}";
+            _copyPreview = await Http.GetFromJsonAsync<CopyPreviewResponse>(url);
+        }
+        catch (Exception ex)
+        {
+            _copyError = ex.Message;
+        }
+        finally
+        {
+            _copyBusy = false;
+        }
+    }
+
+    private async Task ApplyCopyAsync()
+    {
+        if (!Session.IsAdmin) return;
+        var targetList = ParseTargets();
+        if (targetList.Count == 0)
+        {
+            _copyError = "Enter at least one target tree name.";
+            return;
+        }
+
+        _copyBusy = true;
+        _copyError = null;
+        try
+        {
+            var payload = new AdminTreeCopySubtreeRequest
+            {
+                SourceTree = _copySourceTree,
+                RootSlug = _copyRootSlug,
+                IncludeRoot = _copyIncludeRoot,
+                Overwrite = _copyOverwrite,
+                TargetTreeNames = targetList
+            };
+
+            var resp = await Http.PostAsJsonAsync("/api/admin/trees/copy-subtree", payload);
+            if (resp.IsSuccessStatusCode)
+            {
+                _showCopyModal = false;
+                var currentName = _trees.FirstOrDefault(t => t.TreeId == _selectedTreeId)?.Name;
+                if (_selectedTreeId is not null && currentName is not null && targetList.Any(t => string.Equals(t, currentName, StringComparison.OrdinalIgnoreCase)))
+                {
+                    await LoadEdgesAsync();
+                }
+            }
+            else
+            {
+                _copyError = await resp.Content.ReadAsStringAsync();
+            }
+        }
+        catch (Exception ex)
+        {
+            _copyError = ex.Message;
+        }
+        finally
+        {
+            _copyBusy = false;
+        }
+    }
+
+    private List<string> ParseTargets()
+    {
+        return _copyTargets
+            .Split(new[] { '\r', '\n', ',', ';' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    private sealed class EngineStatusVM
+    {
+        [JsonPropertyName("engine_family_id")] public long EngineFamilyId { get; set; }
+        [JsonPropertyName("code")] public string Code { get; set; } = string.Empty;
+        [JsonPropertyName("is_default")] public bool IsDefault { get; set; }
+        [JsonPropertyName("attached")] public bool Attached { get; set; }
+    }
+
+    private sealed class TreeRow
+    {
+        [JsonPropertyName("tree_id")] public long TreeId { get; set; }
+        [JsonPropertyName("name")] public string Name { get; set; } = string.Empty;
+        [JsonPropertyName("description")] public string? Description { get; set; }
+    }
+
+    private sealed class TreeEdge
+    {
+        [JsonPropertyName("parent_category_id")] public long ParentCategoryId { get; set; }
+        [JsonPropertyName("parent_slug")] public string? ParentSlug { get; set; }
+        [JsonPropertyName("parent_name")] public string? ParentName { get; set; }
+        [JsonPropertyName("child_category_id")] public long ChildCategoryId { get; set; }
+        [JsonPropertyName("child_slug")] public string? ChildSlug { get; set; }
+        [JsonPropertyName("child_name")] public string? ChildName { get; set; }
+        [JsonPropertyName("position")] public int Position { get; set; }
+    }
+
+    private sealed class TreeParent
+    {
+        public long CategoryId { get; set; }
+        public string? Name { get; set; }
+        public string? Slug { get; set; }
+    }
+
+    private sealed class ParentOption
+    {
+        [JsonPropertyName("category_id")] public long CategoryId { get; set; }
+        [JsonPropertyName("slug")] public string? Slug { get; set; }
+        [JsonPropertyName("name")] public string? Name { get; set; }
+        [JsonPropertyName("is_selectable")] public bool IsSelectable { get; set; }
+    }
+
+    private sealed class CopyPreviewResponse
+    {
+        [JsonPropertyName("edges")] public List<CopyEdge> Edges { get; set; } = new();
+        [JsonPropertyName("targets")] public List<CopyTarget> Targets { get; set; } = new();
+    }
+
+    private sealed class CopyEdge
+    {
+        [JsonPropertyName("parent_category_id")] public long ParentCategoryId { get; set; }
+        [JsonPropertyName("child_category_id")] public long ChildCategoryId { get; set; }
+        [JsonPropertyName("position")] public int Position { get; set; }
+        [JsonPropertyName("parent_slug")] public string ParentSlug { get; set; } = string.Empty;
+        [JsonPropertyName("child_slug")] public string ChildSlug { get; set; } = string.Empty;
+    }
+
+    private sealed class CopyTarget
+    {
+        [JsonPropertyName("tree")] public string Tree { get; set; } = string.Empty;
+        [JsonPropertyName("new_edges")] public int NewEdges { get; set; }
+        [JsonPropertyName("total_edges")] public int TotalEdges { get; set; }
+        [JsonPropertyName("tree_missing")] public bool TreeMissing { get; set; }
+    }
+}

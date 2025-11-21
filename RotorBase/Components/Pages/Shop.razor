@@ -1,0 +1,629 @@
+@page "/shop"
+@rendermode InteractiveServer
+@using System.Globalization
+@using System.Linq
+@using System.Net
+@using System.Text.Json
+@using System.Text.Json.Serialization
+@inject HttpClient Http
+@inject UserSession Session
+@inject CompareTrayService CompareTray
+@inject ToastService Toast
+
+<PageTitle>Shop</PageTitle>
+
+<div class="relative min-h-[calc(100vh-4rem)] bg-background text-foreground">
+    <div aria-hidden="true" class="pointer-events-none absolute inset-x-0 top-0 h-32 bg-grid opacity-[.12]"></div>
+
+    <section class="container relative z-10 py-6">
+        <div class="mb-5 flex flex-wrap items-center justify-between gap-3">
+            <h1 class="text-2xl font-bold tracking-tight md:text-3xl">Shop</h1>
+            <div class="text-sm text-foreground/70">
+                <span class="badge">@TotalResults</span> results
+            </div>
+        </div>
+
+        <section class="card mb-6 p-4 md:p-5">
+            <div class="grid gap-4 md:grid-cols-12">
+                <div class="md:col-span-3">
+                    <label class="label">Search</label>
+                    <input class="input" placeholder="Search…" @bind="Q" @bind:event="oninput" />
+                </div>
+                <div class="md:col-span-3">
+                    <label class="label">Engine code</label>
+                    <input class="input" placeholder="e.g. 13B-REW-S6" @bind="Engine" />
+                </div>
+                <div class="md:col-span-3">
+                    <label class="label">Category slug</label>
+                    <input class="input" placeholder="e.g. apex-seals" @bind="Category" />
+                </div>
+                <div class="md:col-span-3">
+                    <label class="label">Brand</label>
+                    <input class="input" @bind="Brand" />
+                </div>
+                <div class="md:col-span-2">
+                    <label class="label">Min $</label>
+                    <input class="input" type="number" step="0.01" @bind="Min" />
+                </div>
+                <div class="md:col-span-2">
+                    <label class="label">Max $</label>
+                    <input class="input" type="number" step="0.01" @bind="Max" />
+                </div>
+                <div class="md:col-span-3">
+                    <label class="label">Sort by</label>
+                    <select class="input" @bind="Sort">
+                        <option value="price">Price</option>
+                        <option value="updated">Updated</option>
+                    </select>
+                </div>
+                <div class="md:col-span-3">
+                    <label class="label">Direction</label>
+                    <select class="input" @bind="Dir">
+                        <option value="asc">Ascending</option>
+                        <option value="desc">Descending</option>
+                    </select>
+                </div>
+                <div class="md:col-span-2 flex items-end">
+                    <label class="label inline-flex items-center gap-2">
+                        <input class="h-4 w-4" type="checkbox" @bind="InStock" />
+                        <span>In stock only</span>
+                    </label>
+                </div>
+            </div>
+
+            <div class="mt-4 flex flex-wrap gap-2">
+                <button class="btn btn-primary" @onclick="PerformSearchAsync" disabled="@IsLoading">Search</button>
+                <button class="btn btn-ghost" @onclick="ResetFilters" disabled="@IsLoading">Reset</button>
+            </div>
+        </section>
+
+        @if (!string.IsNullOrEmpty(SuccessMessage))
+        {
+            <div class="mb-4 card px-3 py-2 ring-1 ring-success/25 bg-success/5 text-success">
+                <div class="flex items-start justify-between gap-4">
+                    <div>@SuccessMessage</div>
+                    <button class="btn btn-ghost h-8 px-2" @onclick="DismissSuccess">✕</button>
+                </div>
+            </div>
+        }
+
+        @if (IsLoading)
+        {
+            <div class="mb-4 card px-3 py-2 ring-1 ring-info/25 bg-info/5 text-info">Searching…</div>
+        }
+        else if (!string.IsNullOrEmpty(ErrorMessage))
+        {
+            <div class="mb-4 card px-3 py-2 ring-1 ring-danger/25 bg-danger/5 text-danger">@ErrorMessage</div>
+        }
+
+        <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            @foreach (var p in Rows)
+            {
+                <ShopCard PartId="@p.part_id"
+                          Sku="@p.sku"
+                          Name="@p.name"
+                          Brand="@p.brand"
+                          CategoryName="@p.category_name"
+                          ImageUrl="@p.image_url"
+                          IsKit="@p.is_kit"
+                          BestPrice="@p.best_price"
+                          FitsEngine="@p.fits_engine"
+                          EngineCode="@Engine"
+                          AddToBuildRequested="HandleAddToBuildAsync"
+                          OnCompare="AddToCompareAsync" />
+            }
+        </div>
+
+        @if (!Rows.Any() && !IsLoading && string.IsNullOrEmpty(ErrorMessage))
+        {
+            <div class="mt-6 card p-6 text-center text-sm text-foreground/70">
+                No parts found. Try different filters.
+            </div>
+        }
+
+        @if ((TotalResults > PageSize || Page > 1) && !IsLoading)
+        {
+            <div class="mt-8 flex flex-col gap-3 border-t border-border/60 pt-4 md:flex-row md:items-center md:justify-between">
+                <div class="text-sm text-foreground/70">
+                    @if (TotalResults == 0 || ShowingFrom == 0 || ShowingTo == 0)
+                    {
+                        <span>Showing 0 results</span>
+                    }
+                    else
+                    {
+                        <span>Showing @ShowingFrom&ndash;@ShowingTo of @TotalResults</span>
+                    }
+                </div>
+                <div class="flex items-center gap-3">
+                    <button class="btn btn-ghost" @onclick="GoToPreviousPage" disabled="@(!CanGoPrevious)">Previous</button>
+                    <span class="text-sm text-foreground/70">Page @Page of @TotalPages</span>
+                    <button class="btn btn-ghost" @onclick="GoToNextPage" disabled="@(!CanGoNext)">Next</button>
+                </div>
+            </div>
+        }
+    </section>
+</div>
+
+@if (ShowBuildPicker)
+{
+    <div class="fixed inset-0 z-40 bg-background/60 backdrop-blur-sm"></div>
+    <div class="fixed inset-0 z-50 grid place-items-center p-4">
+        <div class="card w-full max-w-lg overflow-hidden">
+            <div class="flex items-center justify-between border-b border-border/60 px-4 py-3">
+                <h5 class="text-lg font-semibold">Add to build</h5>
+                <button class="btn btn-ghost h-8 px-2"
+                        @onclick="CloseBuildPicker"
+                        disabled="@BuildPickerSubmitting"
+                        aria-label="Close">✕</button>
+            </div>
+
+            <div class="space-y-3 p-4">
+                @if (BuildPickerLoading)
+                {
+                    <div class="flex items-center gap-2 text-sm">
+                        <svg class="h-4 w-4 animate-spin" viewBox="0 0 24 24">
+                            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4A4 4 0 004 12z"></path>
+                        </svg>
+                        <span>Loading…</span>
+                    </div>
+                }
+                else if (BuildPickerError is not null)
+                {
+                    <div class="card px-3 py-2 ring-1 ring-danger/25 bg-danger/5 text-danger">@BuildPickerError</div>
+                }
+                else if (PendingSelection is not null)
+                {
+                    <div>
+                        <label class="label">Build</label>
+                        <select class="input" @bind="SelectedBuildId">
+                            @foreach (var build in BuildOptions)
+                            {
+                                <option value="@build.BuildId">@build.Name</option>
+                            }
+                        </select>
+                    </div>
+
+                    @if (PendingSelection.Categories.Count > 0)
+                    {
+                        <div>
+                            <label class="label">Category</label>
+                            <select class="input" @bind="SelectedCategoryId">
+                                @foreach (var cat in PendingSelection.Categories)
+                                {
+                                    <option value="@cat.CategoryId">@cat.Name</option>
+                                }
+                            </select>
+                        </div>
+                    }
+                    else
+                    {
+                        <div class="card px-3 py-2 text-sm ring-1 ring-info/25 bg-info/5 text-info">
+                            This part will use its primary category automatically.
+                        </div>
+                    }
+
+                    <div class="text-sm">
+                        <strong>Part:</strong> @PendingSelection.PartName
+                    </div>
+                }
+            </div>
+
+            <div class="flex items-center justify-end gap-2 border-t border-border/60 px-4 py-3">
+                <button class="btn btn-ghost"
+                        @onclick="CloseBuildPicker"
+                        disabled="@BuildPickerSubmitting">Cancel</button>
+                <button class="btn btn-primary"
+                        @onclick="SubmitAddToBuildAsync"
+                        disabled="@(BuildPickerSubmitting || BuildPickerLoading || PendingSelection is null)">
+                    @(BuildPickerSubmitting ? "Adding…" : "Add")
+                </button>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private List<Row> Rows { get; set; } = new();
+    private bool IsLoading;
+    private string? ErrorMessage;
+    private string? SuccessMessage;
+
+    private string? Q;
+    private string? Engine;
+    private string? Category;
+    private string? Brand;
+    private decimal? Min;
+    private decimal? Max;
+    private bool InStock;
+    private string Sort = "price";
+    private string Dir = "asc";
+    private int Page = 1;
+    private const int PageSize = 60;
+    private long TotalResults;
+    private bool HasMore;
+    private long ShowingFrom;
+    private long ShowingTo;
+
+    private List<BuildSummaryDto> BuildOptions { get; set; } = new();
+    private bool BuildOptionsLoaded;
+    private bool ShowBuildPicker;
+    private bool BuildPickerLoading;
+    private bool BuildPickerSubmitting;
+    private string? BuildPickerError;
+    private BuildSelectionContext? PendingSelection;
+    private long? SelectedBuildId;
+    private long? SelectedCategoryId;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        IsLoading = true;
+        ErrorMessage = null;
+        SuccessMessage = null;
+
+        try
+        {
+            var query = BuildQueryString();
+            var result = await Http.GetFromJsonAsync<ShopResponse>($"/api/shop{query}");
+            if (result is not null)
+            {
+                Rows = result.Items ?? new List<Row>();
+                TotalResults = result.Total;
+                Page = result.Page <= 0 ? 1 : result.Page;
+                HasMore = result.HasMore;
+            }
+            else
+            {
+                Rows = new List<Row>();
+                TotalResults = 0;
+                HasMore = false;
+            }
+            UpdateDisplayRange();
+        }
+        catch (Exception ex)
+        {
+            ErrorMessage = ex.Message;
+            Rows.Clear();
+            TotalResults = 0;
+            HasMore = false;
+            ShowingFrom = 0;
+            ShowingTo = 0;
+        }
+        finally
+        {
+            IsLoading = false;
+        }
+    }
+
+    private string BuildQueryString()
+    {
+        var parameters = new List<KeyValuePair<string, string?>>();
+
+        void AddIfNotEmpty(string key, string? value)
+        {
+            if (!string.IsNullOrWhiteSpace(value))
+            {
+                parameters.Add(new KeyValuePair<string, string?>(key, value));
+            }
+        }
+
+        AddIfNotEmpty("q", Q);
+        AddIfNotEmpty("engine", Engine);
+        AddIfNotEmpty("category", Category);
+        AddIfNotEmpty("brand", Brand);
+        AddIfNotEmpty("min", FormatDecimal(Min));
+        AddIfNotEmpty("max", FormatDecimal(Max));
+        if (InStock)
+        {
+            parameters.Add(new KeyValuePair<string, string?>("in_stock", "1"));
+        }
+
+        parameters.Add(new KeyValuePair<string, string?>("sort", Sort));
+        parameters.Add(new KeyValuePair<string, string?>("dir", Dir));
+        parameters.Add(new KeyValuePair<string, string?>("page", Page.ToString(CultureInfo.InvariantCulture)));
+        parameters.Add(new KeyValuePair<string, string?>("pageSize", PageSize.ToString(CultureInfo.InvariantCulture)));
+
+        if (parameters.Count == 0)
+        {
+            return string.Empty;
+        }
+
+        var query = string.Join('&', parameters.Select(kv => $"{kv.Key}={Uri.EscapeDataString(kv.Value ?? string.Empty)}"));
+        return $"?{query}";
+    }
+
+    private static string? FormatDecimal(decimal? value) => value?.ToString(CultureInfo.InvariantCulture);
+
+    private async Task ResetFilters()
+    {
+        Q = null;
+        Engine = null;
+        Category = null;
+        Brand = null;
+        Min = null;
+        Max = null;
+        InStock = false;
+        Sort = "price";
+        Dir = "asc";
+        Page = 1;
+        await LoadAsync();
+    }
+
+    private async Task PerformSearchAsync()
+    {
+        Page = 1;
+        await LoadAsync();
+    }
+
+    private Task HandleAddToBuildAsync(ShopCardAddRequest request) => AddToBuild(request.PartId, request.Sku);
+
+    private async Task AddToCompareAsync(string sku)
+    {
+        if (string.IsNullOrWhiteSpace(sku))
+        {
+            return;
+        }
+
+        var added = await CompareTray.AddAsync(sku);
+        Toast.Show(added ? $"Added {sku} to compare." : $"{sku} is already in compare.",
+            added ? ToastKind.Success : ToastKind.Info);
+    }
+
+    private async Task AddToBuild(long partId, string? sku = null)
+    {
+        SuccessMessage = null;
+        ErrorMessage = null;
+
+        if (!Session.IsSignedIn)
+        {
+            ErrorMessage = "Sign in to add parts to a build.";
+            return;
+        }
+
+        await EnsureBuildOptionsAsync();
+        if (BuildOptions.Count == 0)
+        {
+            ErrorMessage = "Create a build first to add parts.";
+            return;
+        }
+
+        BuildPickerLoading = true;
+        BuildPickerError = null;
+        ShowBuildPicker = true;
+        PendingSelection = null;
+        SelectedCategoryId = null;
+
+        try
+        {
+            var key = !string.IsNullOrWhiteSpace(sku) ? sku! : partId.ToString(CultureInfo.InvariantCulture);
+            var detail = await Http.GetFromJsonAsync<ShopPartMeta>($"/api/shop/parts/{key}");
+            if (detail is null)
+            {
+                BuildPickerError = "Unable to load part details.";
+                return;
+            }
+
+            var categories = detail.Categories ?? new List<CategorySummary>();
+            var ordered = categories
+                .OrderByDescending(c => c.IsPrimary)
+                .ThenBy(c => c.Name)
+                .ToList();
+
+            PendingSelection = new BuildSelectionContext(partId, detail.Part?.Name ?? key, ordered);
+            SelectedCategoryId = ordered.FirstOrDefault()?.CategoryId;
+            SelectedBuildId ??= BuildOptions.FirstOrDefault()?.BuildId;
+        }
+        catch (HttpRequestException ex) when (ex.StatusCode == HttpStatusCode.NotFound)
+        {
+            BuildPickerError = "Part record not found.";
+        }
+        catch (Exception ex)
+        {
+            BuildPickerError = ex.Message;
+        }
+        finally
+        {
+            BuildPickerLoading = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task EnsureBuildOptionsAsync()
+    {
+        if (BuildOptionsLoaded || BuildPickerLoading)
+        {
+            return;
+        }
+
+        BuildPickerLoading = true;
+        BuildPickerError = null;
+
+        try
+        {
+            var result = await Http.GetFromJsonAsync<List<BuildSummaryDto>>("/api/builds?page_size=200&include_archived=false&include_shared=true");
+            BuildOptions = result?.Where(b => !b.IsArchived).OrderByDescending(b => b.UpdatedAt).ToList() ?? new List<BuildSummaryDto>();
+            BuildOptionsLoaded = true;
+            if (BuildOptions.Count > 0)
+            {
+                SelectedBuildId ??= BuildOptions[0].BuildId;
+            }
+        }
+        catch (Exception ex)
+        {
+            BuildPickerError = ex.Message;
+        }
+        finally
+        {
+            BuildPickerLoading = false;
+        }
+    }
+
+    private async Task SubmitAddToBuildAsync()
+    {
+        if (PendingSelection is null || SelectedBuildId is null)
+        {
+            BuildPickerError = "Select a build.";
+            return;
+        }
+
+        BuildPickerSubmitting = true;
+        BuildPickerError = null;
+
+        try
+        {
+            var payload = new BuildAddPartRequest
+            {
+                PartId = PendingSelection.PartId,
+                Qty = 1m,
+                CategoryId = SelectedCategoryId
+            };
+
+            var response = await Http.PostAsJsonAsync($"/api/builds/{SelectedBuildId}/add-part", payload);
+            if (!response.IsSuccessStatusCode)
+            {
+                BuildPickerError = await ReadErrorMessageAsync(response, "Unable to add part to build.");
+                return;
+            }
+
+            ShowBuildPicker = false;
+            SuccessMessage = $"Added {PendingSelection.PartName} to build.";
+        }
+        catch (HttpRequestException ex) when (ex.StatusCode == HttpStatusCode.Unauthorized)
+        {
+            BuildPickerError = "Sign in to add parts.";
+        }
+        catch (Exception ex)
+        {
+            BuildPickerError = ex.Message;
+        }
+        finally
+        {
+            BuildPickerSubmitting = false;
+            PendingSelection = null;
+        }
+    }
+
+    private static async Task<string> ReadErrorMessageAsync(HttpResponseMessage response, string fallback)
+    {
+        try
+        {
+            var text = await response.Content.ReadAsStringAsync();
+            if (!string.IsNullOrWhiteSpace(text))
+            {
+                try
+                {
+                    using var doc = JsonDocument.Parse(text);
+                    if (doc.RootElement.TryGetProperty("message", out var messageProp) && messageProp.ValueKind == JsonValueKind.String)
+                        return messageProp.GetString()!;
+                    if (doc.RootElement.TryGetProperty("error", out var errorProp) && errorProp.ValueKind == JsonValueKind.String)
+                        return errorProp.GetString()!;
+                }
+                catch (JsonException)
+                {
+                    // ignore malformed JSON
+                }
+
+                return text.Length > 200 ? text[..200] + "…" : text;
+            }
+        }
+        catch
+        {
+        }
+
+        return fallback;
+    }
+
+    private void CloseBuildPicker()
+    {
+        ShowBuildPicker = false;
+        BuildPickerError = null;
+        PendingSelection = null;
+    }
+
+    private void DismissSuccess() => SuccessMessage = null;
+
+    private int TotalPages => TotalResults <= 0
+        ? 1
+        : (int)Math.Ceiling(TotalResults / (double)PageSize);
+
+    private bool CanGoPrevious => Page > 1 && !IsLoading;
+    private bool CanGoNext => !IsLoading && (HasMore || ((long)Page * PageSize) < TotalResults);
+
+    private async Task GoToPreviousPage()
+    {
+        if (!CanGoPrevious)
+            return;
+
+        Page--;
+        await LoadAsync();
+    }
+
+    private async Task GoToNextPage()
+    {
+        if (!CanGoNext)
+            return;
+
+        Page++;
+        await LoadAsync();
+    }
+
+    private void UpdateDisplayRange()
+    {
+        if (Rows.Count == 0 || TotalResults <= 0)
+        {
+            ShowingFrom = 0;
+            ShowingTo = 0;
+            return;
+        }
+
+        var start = (long)(Math.Max(0, Page - 1)) * PageSize + 1;
+        if (start > TotalResults)
+        {
+            start = Math.Max(1, TotalResults - Rows.Count + 1);
+        }
+
+        ShowingFrom = start;
+        ShowingTo = Math.Min(TotalResults, start + Rows.Count - 1);
+    }
+
+    private sealed class Row
+    {
+        public long part_id { get; set; }
+        public string sku { get; set; } = string.Empty;
+        public string name { get; set; } = string.Empty;
+        public string brand { get; set; } = string.Empty;
+        public string? image_url { get; set; }
+        public decimal? best_price { get; set; }
+        public bool is_kit { get; set; }
+        public bool fits_engine { get; set; }
+        public string? category_name { get; set; }
+        public string? category_slug { get; set; }
+        public decimal? pieces_per_unit { get; set; }
+        public DateTime? updated_at { get; set; }
+    }
+
+    private sealed class ShopResponse
+    {
+        [JsonPropertyName("items")]
+        public List<Row>? Items { get; set; }
+
+        [JsonPropertyName("total")]
+        public long Total { get; set; }
+
+        [JsonPropertyName("page")]
+        public int Page { get; set; }
+
+        [JsonPropertyName("page_size")]
+        public int PageSize { get; set; }
+
+        [JsonPropertyName("has_more")]
+        public bool HasMore { get; set; }
+    }
+
+    private sealed record BuildSelectionContext(long PartId, string PartName, IReadOnlyList<CategorySummary> Categories);
+}

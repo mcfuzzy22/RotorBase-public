@@ -1,0 +1,247 @@
+@inject HttpClient Http
+
+<button type="button" class="btn btn-sm btn-outline-secondary" @onclick="() => Open = true">Manage Brands/Vendors</button>
+
+@if (Open)
+{
+    <div class="modal-backdrop fade show"></div>
+    <div class="modal d-block" tabindex="-1" style="background: rgba(0,0,0,0.3);">
+        <div class="modal-dialog modal-lg modal-dialog-scrollable">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">Manage Brands & Vendors</h5>
+                    <button type="button" class="btn-close" @onclick="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="row g-4">
+                        <div class="col-md-6">
+                            <h6 class="mb-2">Brands</h6>
+                            <div class="input-group mb-2">
+                                <input class="form-control" placeholder="Search brand…" @bind="BrandQuery" @bind:event="oninput" />
+                                <button class="btn btn-outline-secondary" type="button" @onclick="LoadBrands">Search</button>
+                            </div>
+                            <ul class="list-group" style="max-height: 240px; overflow-y: auto;">
+                                @foreach (var brand in Brands)
+                                {
+                                    <li class="list-group-item d-flex gap-2 align-items-center">
+                                        <input class="form-control form-control-sm" value="@brand.Name" @onchange="e => RenameBrandAsync(brand.BrandId, e.Value?.ToString() ?? brand.Name)" />
+                                        <button class="btn btn-sm btn-outline-primary" type="button" @onclick="() => SelectBrandAsync(brand.Name)">Use</button>
+                                    </li>
+                                }
+                            </ul>
+                            <div class="input-group mt-3">
+                                <input class="form-control" placeholder="New brand…" @bind="NewBrandName" />
+                                <button class="btn btn-outline-success" type="button" @onclick="CreateBrandAsync">Create</button>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <h6 class="mb-2">Vendors</h6>
+                            <div class="input-group mb-2">
+                                <input class="form-control" placeholder="Search vendor…" @bind="VendorQuery" @bind:event="oninput" />
+                                <button class="btn btn-outline-secondary" type="button" @onclick="LoadVendors">Search</button>
+                            </div>
+                            <ul class="list-group" style="max-height: 240px; overflow-y: auto;">
+                                @foreach (var vendor in Vendors)
+                                {
+                                    <li class="list-group-item d-flex gap-2 align-items-center">
+                                        <input class="form-control form-control-sm" value="@vendor.Name" @onchange="e => RenameVendorAsync(vendor.VendorId, e.Value?.ToString() ?? vendor.Name)" />
+                                        <button class="btn btn-sm btn-outline-primary" type="button" @onclick="() => SelectVendorAsync(vendor.Name)">Use</button>
+                                    </li>
+                                }
+                            </ul>
+                            <div class="input-group mt-3">
+                                <input class="form-control" placeholder="New vendor…" @bind="NewVendorName" />
+                                <button class="btn btn-outline-success" type="button" @onclick="CreateVendorAsync">Create</button>
+                            </div>
+                        </div>
+                    </div>
+                    @if (!string.IsNullOrEmpty(Error))
+                    {
+                        <div class="alert alert-danger mt-3">@Error</div>
+                    }
+                    @if (!string.IsNullOrEmpty(Info))
+                    {
+                        <div class="alert alert-success mt-3">@Info</div>
+                    }
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary" type="button" @onclick="Close">Close</button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter] public EventCallback<string> OnPickBrand { get; set; }
+    [Parameter] public EventCallback<string> OnPickVendor { get; set; }
+
+    private bool Open { get; set; }
+    private string BrandQuery { get; set; } = string.Empty;
+    private string VendorQuery { get; set; } = string.Empty;
+    private string NewBrandName { get; set; } = string.Empty;
+    private string NewVendorName { get; set; } = string.Empty;
+    private string? Error { get; set; }
+    private string? Info { get; set; }
+
+    private readonly List<BrandResult> Brands = new();
+    private readonly List<VendorResult> Vendors = new();
+
+    private record BrandResult(long BrandId, string Name);
+    private record VendorResult(long VendorId, string Name);
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadBrands();
+        await LoadVendors();
+    }
+
+    private async Task LoadBrands()
+    {
+        try
+        {
+            Error = null;
+            var url = $"/api/admin/brands?q={Uri.EscapeDataString(BrandQuery ?? string.Empty)}";
+            var rows = await Http.GetFromJsonAsync<List<BrandResult>>(url) ?? new();
+            Brands.Clear();
+            Brands.AddRange(rows);
+        }
+        catch (Exception ex)
+        {
+            Error = ex.Message;
+        }
+    }
+
+    private async Task LoadVendors()
+    {
+        try
+        {
+            Error = null;
+            var url = $"/api/admin/vendors?q={Uri.EscapeDataString(VendorQuery ?? string.Empty)}";
+            var rows = await Http.GetFromJsonAsync<List<VendorResult>>(url) ?? new();
+            Vendors.Clear();
+            Vendors.AddRange(rows);
+        }
+        catch (Exception ex)
+        {
+            Error = ex.Message;
+        }
+    }
+
+    private async Task CreateBrandAsync()
+    {
+        if (string.IsNullOrWhiteSpace(NewBrandName))
+            return;
+
+        try
+        {
+            Error = null;
+            Info = null;
+            var url = $"/api/admin/brands?name={Uri.EscapeDataString(NewBrandName)}";
+            var resp = await Http.PostAsync(url, null);
+            if (!resp.IsSuccessStatusCode)
+            {
+                Error = $"Create brand failed: {(int)resp.StatusCode} {resp.ReasonPhrase}";
+                return;
+            }
+            Info = "Brand created.";
+            NewBrandName = string.Empty;
+            await LoadBrands();
+        }
+        catch (Exception ex)
+        {
+            Error = ex.Message;
+        }
+    }
+
+    private async Task CreateVendorAsync()
+    {
+        if (string.IsNullOrWhiteSpace(NewVendorName))
+            return;
+
+        try
+        {
+            Error = null;
+            Info = null;
+            var url = $"/api/admin/vendors?name={Uri.EscapeDataString(NewVendorName)}";
+            var resp = await Http.PostAsync(url, null);
+            if (!resp.IsSuccessStatusCode)
+            {
+                Error = $"Create vendor failed: {(int)resp.StatusCode} {resp.ReasonPhrase}";
+                return;
+            }
+            Info = "Vendor created.";
+            NewVendorName = string.Empty;
+            await LoadVendors();
+        }
+        catch (Exception ex)
+        {
+            Error = ex.Message;
+        }
+    }
+
+    private async Task RenameBrandAsync(long id, string name)
+    {
+        if (string.IsNullOrWhiteSpace(name))
+            return;
+
+        try
+        {
+            var request = new HttpRequestMessage(HttpMethod.Patch, $"/api/admin/brands/{id}?name={Uri.EscapeDataString(name)}");
+            var response = await Http.SendAsync(request);
+            if (!response.IsSuccessStatusCode)
+            {
+                Error = $"Rename brand failed: {(int)response.StatusCode} {response.ReasonPhrase}";
+            }
+        }
+        catch (Exception ex)
+        {
+            Error = ex.Message;
+        }
+    }
+
+    private async Task RenameVendorAsync(long id, string name)
+    {
+        if (string.IsNullOrWhiteSpace(name))
+            return;
+
+        try
+        {
+            var request = new HttpRequestMessage(HttpMethod.Patch, $"/api/admin/vendors/{id}?name={Uri.EscapeDataString(name)}");
+            var response = await Http.SendAsync(request);
+            if (!response.IsSuccessStatusCode)
+            {
+                Error = $"Rename vendor failed: {(int)response.StatusCode} {response.ReasonPhrase}";
+            }
+        }
+        catch (Exception ex)
+        {
+            Error = ex.Message;
+        }
+    }
+
+    private async Task SelectBrandAsync(string name)
+    {
+        if (OnPickBrand.HasDelegate)
+        {
+            await OnPickBrand.InvokeAsync(name);
+        }
+        Info = $"Selected brand '{name}'.";
+    }
+
+    private async Task SelectVendorAsync(string name)
+    {
+        if (OnPickVendor.HasDelegate)
+        {
+            await OnPickVendor.InvokeAsync(name);
+        }
+        Info = $"Selected vendor '{name}'.";
+    }
+
+    private void Close()
+    {
+        Open = false;
+        Error = null;
+        Info = null;
+    }
+}

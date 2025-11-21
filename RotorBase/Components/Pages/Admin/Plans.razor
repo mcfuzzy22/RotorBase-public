@@ -1,0 +1,327 @@
+@page "/admin/plans"
+@rendermode InteractiveServer
+@using System.Net.Http.Json
+@using System.Text.Json.Serialization
+@inject HttpClient Http
+@inject UserSession Session
+
+<h1 class="mb-3 text-2xl font-semibold">Admin · Plans</h1>
+
+@if (!Session.IsSignedIn)
+{
+    <div class="rounded-md border border-sky-200 bg-sky-50 px-4 py-2 text-sm text-sky-800" role="alert">
+        Sign in to view admin tools.
+    </div>
+}
+else if (!Session.IsAdmin)
+{
+    <div class="rounded-md border border-amber-200 bg-amber-50 px-4 py-2 text-sm text-amber-800" role="alert">
+        You need admin access to manage plans.
+    </div>
+}
+else if (_loading)
+{
+    <div class="flex items-center gap-2 text-gray-700">
+        <div class="h-4 w-4 animate-spin rounded-full border-2 border-indigo-600 border-t-transparent" aria-hidden="true"></div>
+        <span class="text-sm">Loading plans…</span>
+    </div>
+}
+else
+{
+    @if (_showPlanModal)
+    {
+        <!-- Modal overlay -->
+        <div class="fixed inset-0 z-40 bg-black/40"></div>
+        <!-- Modal -->
+        <div class="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <div class="w-full max-w-lg rounded-lg bg-white shadow-xl">
+                <div class="flex items-center justify-between border-b border-gray-100 p-3">
+                    <h5 class="text-base font-semibold">Create Plan</h5>
+                    <button type="button" class="h-8 w-8 rounded-md text-gray-500 hover:bg-gray-100"
+                            aria-label="Close" @onclick="ClosePlanModal">✕</button>
+                </div>
+                <div class="p-4">
+                    <div class="mb-3">
+                        <label class="mb-1 block text-sm font-medium text-gray-700">Plan code</label>
+                        <input class="block w-full rounded-md border border-gray-300 px-3 py-2 text-sm uppercase text-gray-800 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                               placeholder="PRO" @bind="_planCode" />
+                    </div>
+                    <div class="mb-3">
+                        <label class="mb-1 block text-sm font-medium text-gray-700">Plan name</label>
+                        <input class="block w-full rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-800 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                               placeholder="Pro" @bind="_planName" />
+                    </div>
+                    <div class="mb-3 grid gap-2 md:grid-cols-2">
+                        <div>
+                            <label class="mb-1 block text-sm font-medium text-gray-700">Monthly price (USD)</label>
+                            <input class="block w-full rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-800 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                                   type="number" min="0" step="0.01" @bind="_planMonthlyPrice" />
+                        </div>
+                        <div>
+                            <label class="mb-1 block text-sm font-medium text-gray-700">Currency (optional)</label>
+                            <input class="block w-full rounded-md border border-gray-300 px-3 py-2 text-sm uppercase text-gray-800 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                                   maxlength="3" placeholder="USD" @bind="_planCurrency" />
+                        </div>
+                    </div>
+                    <div class="mb-2 grid gap-2 md:grid-cols-2">
+                        <div>
+                            <label class="mb-1 block text-sm font-medium text-gray-700">Max active builds</label>
+                            <input class="block w-full rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-800 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                                   type="number" min="0" @bind="_planMaxActive" />
+                        </div>
+                        <div>
+                            <label class="mb-1 block text-sm font-medium text-gray-700">Max total builds</label>
+                            <input class="block w-full rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-800 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                                   type="number" min="0" @bind="_planMaxTotal" />
+                        </div>
+                    </div>
+
+                    @if (!string.IsNullOrWhiteSpace(_planError))
+                    {
+                        <div class="text-sm text-red-700">@_planError</div>
+                    }
+                </div>
+                <div class="flex justify-end gap-2 border-t border-gray-100 p-3">
+                    <button class="rounded-md border border-gray-300 px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-60"
+                            @onclick="ClosePlanModal" disabled="@_creatingPlan">Cancel</button>
+                    <button class="rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-60"
+                            @onclick="CreatePlanAsync" disabled="@_creatingPlan">
+                        @(_creatingPlan ? "Creating…" : "Create")
+                    </button>
+                </div>
+            </div>
+        </div>
+    }
+
+    @if (!string.IsNullOrEmpty(_alert))
+    {
+        <div class="mb-3 rounded-md border border-amber-200 bg-amber-50 px-4 py-2 text-sm text-amber-800" role="alert">@_alert</div>
+    }
+
+    <div class="mb-3 flex items-center justify-between">
+        <h2 class="m-0 text-lg font-semibold">Admin · Plans</h2>
+        <div class="flex gap-2">
+            <button class="inline-flex items-center rounded-md border border-indigo-300 px-3 py-1.5 text-sm font-medium text-indigo-700 hover:bg-indigo-50"
+                    @onclick="OpenPlanModal">
+                New Plan
+            </button>
+        </div>
+    </div>
+
+    <div class="overflow-x-auto rounded-xl border border-gray-200 bg-white shadow-sm">
+        <table class="min-w-full text-left text-sm">
+            <thead class="bg-gray-50 text-xs uppercase text-gray-500">
+                <tr>
+                    <th class="px-3 py-2">Code</th>
+                    <th class="px-3 py-2">Name</th>
+                    <th class="px-3 py-2">Monthly Price</th>
+                    <th class="px-3 py-2">Max Active</th>
+                    <th class="px-3 py-2">Max Total</th>
+                    <th class="px-3 py-2">Status</th>
+                    <th class="px-3 py-2 text-right"></th>
+                </tr>
+            </thead>
+            <tbody class="divide-y divide-gray-100">
+                @foreach (var plan in _plans)
+                {
+                    <tr>
+                        <td class="px-3 py-2 uppercase font-medium text-gray-900">@plan.Code</td>
+                        <td class="px-3 py-2">
+                            <input class="w-48 rounded-md border border-gray-300 px-2 py-1 text-sm text-gray-800 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                                   @bind="plan.Name" />
+                        </td>
+                        <td class="px-3 py-2">
+                            <input class="w-32 rounded-md border border-gray-300 px-2 py-1 text-sm text-gray-800 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                                   type="number" step="0.01" @bind="plan.MonthlyPrice" />
+                        </td>
+                        <td class="px-3 py-2">
+                            <input class="w-28 rounded-md border border-gray-300 px-2 py-1 text-sm text-gray-800 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                                   type="number" @bind="plan.MaxActiveBuilds" />
+                        </td>
+                        <td class="px-3 py-2">
+                            <input class="w-28 rounded-md border border-gray-300 px-2 py-1 text-sm text-gray-800 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                                   type="number" @bind="plan.MaxTotalBuilds" />
+                        </td>
+                        <td class="px-3 py-2">
+                            @if (plan.IsArchived)
+                            {
+                                <span class="inline-flex items-center rounded-md bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-700">Archived</span>
+                            }
+                            else
+                            {
+                                <span class="inline-flex items-center rounded-md bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-800">Active</span>
+                            }
+                        </td>
+                        <td class="px-3 py-2 text-right">
+                            <button class="inline-flex items-center rounded-md bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-700 disabled:opacity-60"
+                                    @onclick="() => Save(plan)" disabled="@plan.Saving">
+                                @(plan.Saving ? "Saving…" : "Save")
+                            </button>
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+}
+
+@code {
+    class AdminPlanRow
+    {
+        [JsonPropertyName("plan_id")] public long PlanId { get; set; }
+        [JsonPropertyName("code")] public string Code { get; set; } = string.Empty;
+        [JsonPropertyName("name")] public string Name { get; set; } = string.Empty;
+        [JsonPropertyName("monthly_price")] public decimal MonthlyPrice { get; set; }
+        [JsonPropertyName("currency")] public string Currency { get; set; } = "USD";
+        [JsonPropertyName("max_active_builds")] public int? MaxActiveBuilds { get; set; }
+        [JsonPropertyName("max_total_builds")] public int? MaxTotalBuilds { get; set; }
+        [JsonPropertyName("is_archived")] public bool IsArchived { get; set; }
+        [JsonIgnore] public bool Saving { get; set; }
+    }
+
+    List<AdminPlanRow> _plans = new();
+    bool _loading = true;
+    string? _alert;
+
+    bool _showPlanModal;
+    bool _creatingPlan;
+    string _planCode = string.Empty;
+    string _planName = string.Empty;
+    decimal? _planMonthlyPrice = 0m;
+    int? _planMaxActive;
+    int? _planMaxTotal;
+    string? _planCurrency;
+    string? _planError;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadAsync();
+    }
+
+    async Task LoadAsync()
+    {
+        if (!Session.IsSignedIn || !Session.IsAdmin)
+        {
+            _loading = false;
+            return;
+        }
+
+        _loading = true;
+        _alert = null;
+        try
+        {
+            _plans = await Http.GetFromJsonAsync<List<AdminPlanRow>>("/api/admin/plans") ?? new();
+        }
+        catch (Exception ex)
+        {
+            _alert = ex.Message;
+        }
+        finally
+        {
+            _loading = false;
+            StateHasChanged();
+        }
+    }
+
+    async Task Save(AdminPlanRow plan)
+    {
+        if (!Session.IsAdmin || plan.Saving) return;
+        plan.Saving = true;
+        _alert = null;
+        try
+        {
+            var payload = new AdminPlanUpdateRequest
+            {
+                Name = plan.Name,
+                MonthlyPrice = plan.MonthlyPrice,
+                MaxActiveBuilds = plan.MaxActiveBuilds,
+                MaxTotalBuilds = plan.MaxTotalBuilds
+            };
+            var resp = await Http.PatchAsJsonAsync($"/api/admin/plans/{plan.PlanId}", payload);
+            if (!resp.IsSuccessStatusCode)
+            {
+                var detail = await resp.Content.ReadAsStringAsync();
+                _alert = $"Could not save plan {plan.Code}: {(int)resp.StatusCode} {resp.ReasonPhrase}. {detail}";
+            }
+            else
+            {
+                await LoadAsync();
+            }
+        }
+        catch (Exception ex)
+        {
+            _alert = ex.Message;
+        }
+        finally
+        {
+            plan.Saving = false;
+            StateHasChanged();
+        }
+    }
+
+    void OpenPlanModal()
+    {
+        _planError = null;
+        _planCode = string.Empty;
+        _planName = string.Empty;
+        _planMonthlyPrice = 0m;
+        _planMaxActive = null;
+        _planMaxTotal = null;
+        _planCurrency = null;
+        _showPlanModal = true;
+    }
+
+    void ClosePlanModal()
+    {
+        if (_creatingPlan) return;
+        _showPlanModal = false;
+        _planError = null;
+    }
+
+    async Task CreatePlanAsync()
+    {
+        if (_creatingPlan) return;
+        var code = _planCode?.Trim();
+        var name = _planName?.Trim();
+        if (string.IsNullOrWhiteSpace(code) || string.IsNullOrWhiteSpace(name))
+        {
+            _planError = "Code and name are required.";
+            return;
+        }
+
+        var payload = new AdminPlanCreateRequest
+        {
+            Code = code.ToUpperInvariant(),
+            Name = name,
+            MonthlyPrice = _planMonthlyPrice ?? 0m,
+            MaxActiveBuilds = _planMaxActive ?? 0,
+            MaxTotalBuilds = _planMaxTotal ?? 0,
+            Currency = string.IsNullOrWhiteSpace(_planCurrency) ? null : _planCurrency!.Trim().ToUpperInvariant()
+        };
+
+        _creatingPlan = true;
+        _planError = null;
+        try
+        {
+            var resp = await Http.PostAsJsonAsync("/api/admin/plans", payload);
+            if (!resp.IsSuccessStatusCode)
+            {
+                var detail = await resp.Content.ReadAsStringAsync();
+                _planError = $"Create failed: {(int)resp.StatusCode} {resp.ReasonPhrase}. {detail}";
+                return;
+            }
+
+            await LoadAsync();
+            ClosePlanModal();
+        }
+        catch (Exception ex)
+        {
+            _planError = ex.Message;
+        }
+        finally
+        {
+            _creatingPlan = false;
+            StateHasChanged();
+        }
+    }
+}
