@@ -11,9 +11,6 @@ This repo is now scrubbed for public release – all API keys, passwords, and te
 
 ## Local configuration
 
-The committed `appsettings.json` / `appsettings.Development.json` only contain safe placeholders.  
-Provide your own values either via `appsettings.Development.local.json` (ignored by Git) or via `dotnet user-secrets` / environment variables.
-
 Required settings:
 
 - `ConnectionStrings:DefaultConnection`
@@ -27,17 +24,6 @@ Required settings:
 - `Analytics:IngestKey`
 - `Analytics:IpSalt`
 
-Example (user-secrets):
-
-```bash
-cd RotorBase
-dotnet user-secrets init
-dotnet user-secrets set "ConnectionStrings:DefaultConnection" "Server=localhost;Port=3306;Database=rotorbase;User Id=root;Password=yourPassword;"
-dotnet user-secrets set "Mail:Mailgun:ApiKey" "key-..."
-dotnet user-secrets set "Stripe:ApiKey" "sk_live_..."
-dotnet user-secrets set "Stripe:WebhookSecret" "whsec_..."
-```
-
 ## Running locally
 
 ```bash
@@ -47,11 +33,3 @@ dotnet run --project RotorBase/RotorBase.csproj
 ```
 
 The site serves on `http://localhost:5048` by default.
-
-## Before pushing to GitHub
-
-- Keep real secrets out of Git by relying on the `.local` config or user-secrets.
-- Double-check future contributions with tools such as `git diff --cached` or `git secrets`.
-- Remove any environment-specific dumps/export files before pushing if they contain proprietary data.
-
-Happy hacking!
