@@ -133,7 +133,7 @@ if (!string.IsNullOrWhiteSpace(stripeApiKey))
 var jwtSecret = builder.Configuration["JWT:Key"];
 if (string.IsNullOrWhiteSpace(jwtSecret) || jwtSecret.Length < 32)
 {
-    jwtSecret = "devsecret-please-change-this-to-a-longer-key-32bytes-min";
+    throw new InvalidOperationException("JWT:Key configuration missing or too short (min 32 characters).");
 }
 var signingKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtSecret));
 var signingCredentials = new SigningCredentials(signingKey, SecurityAlgorithms.HmacSha256);
@@ -5157,13 +5157,17 @@ app.MapGet("/api/click", async (long partId, long offeringId, long? buildId, Can
 app.MapGet("/shop/go", async (long partId, long? offeringId, long? buildId, CancellationToken ct)
     => await HandleClickAsync(connectionString, partId, offeringId, buildId, vendorName: null, redirect: true, ct));
 
-// Build buy plan (cheapest mix or single vendor)
+// Build buy plan (cheapest mix or single vendor) – limited to owners/editors
 app.MapPost("/api/builds/{buildId:long}/buyplan", async (long buildId, string mode, CancellationToken ct)
-    => await GenerateBuyPlanAsync(connectionString, buildId, mode, ct));
+    => await GenerateBuyPlanAsync(connectionString, buildId, mode, ct))
+    .RequireAuthorization("BuildOwnerOrEditor");
 
-// Ingestion: bootstrap via Perplexity for an engine code
-app.MapPost("/api/ingest/bootstrap-engine", async (IngestionService svc, HttpRequest req, CancellationToken ct) =>
+// Ingestion: bootstrap via Perplexity for an engine code (admin only)
+app.MapPost("/api/ingest/bootstrap-engine", async (HttpContext ctx, IngestionService svc, HttpRequest req, CancellationToken ct) =>
 {
+    if (!EnsureAdmin(ctx))
+        return Results.Forbid();
+
     var body = await req.ReadFromJsonAsync<Dictionary<string, string?>>(cancellationToken: ct);
     if (body is null) return Results.BadRequest(new { error = "Invalid JSON" });
     var engineCode = body.TryGetValue("engine_code", out var code) ? code : null;
@@ -5172,20 +5176,26 @@ app.MapPost("/api/ingest/bootstrap-engine", async (IngestionService svc, HttpReq
     var payload = await svc.GenerateForEngineAsync(engineCode!, treeName, null, ct);
     var result = await svc.IngestAsync(payload, ct);
     return Results.Json(result);
-});
+}).RequireAuthorization("IsSignedIn");
 
 // Ingestion: post a prepared payload JSON (bypass Perplexity)
-app.MapPost("/api/ingest/from-json", async (IngestionService svc, HttpRequest req, CancellationToken ct) =>
+app.MapPost("/api/ingest/from-json", async (HttpContext ctx, IngestionService svc, HttpRequest req, CancellationToken ct) =>
 {
+    if (!EnsureAdmin(ctx))
+        return Results.Forbid();
+
     var payload = await req.ReadFromJsonAsync<IngestionPayload>(cancellationToken: ct);
     if (payload is null) return Results.BadRequest(new { error = "Invalid JSON" });
     var result = await svc.IngestAsync(payload, ct);
     return Results.Json(result);
-});
+}).RequireAuthorization("IsSignedIn");
 
 // Ingestion: preview from a URL (no DB writes)
-app.MapPost("/api/ingest/preview-from-url", async (IngestionService svc, HttpRequest req, CancellationToken ct) =>
+app.MapPost("/api/ingest/preview-from-url", async (HttpContext ctx, IngestionService svc, HttpRequest req, CancellationToken ct) =>
 {
+    if (!EnsureAdmin(ctx))
+        return Results.Forbid();
+
     IngestPreviewRequest? body = null;
     try { body = await req.ReadFromJsonAsync<IngestPreviewRequest>(cancellationToken: ct); }
     catch { }
@@ -5225,7 +5235,7 @@ app.MapPost("/api/ingest/preview-from-url", async (IngestionService svc, HttpReq
     if (enrichParts) payload = await svc.EnrichPartsAsync(payload, ct);
     payload = svc.NormalizePayload(payload, forcedCodes);
     return Results.Json(payload);
-});
+}).RequireAuthorization("IsSignedIn");
 
 // List engine families
 app.MapGet("/api/engine-families", async () =>
@@ -12567,9 +12577,12 @@ app.MapPost("/api/admin/ingest", async (HttpContext ctx, AdminIngestRequest body
     }
 }).RequireAuthorization("IsSignedIn");
 
-// Dangerous: wipe data to re-ingest
-app.MapPost("/api/admin/wipe", async (HttpRequest req) =>
+// Dangerous: wipe data to re-ingest (admin-only)
+app.MapPost("/api/admin/wipe", async (HttpContext ctx, HttpRequest req) =>
 {
+    if (!EnsureAdmin(ctx))
+        return Results.Forbid();
+
     if (string.IsNullOrWhiteSpace(connectionString))
         return Results.Problem(title: "Missing connection string", detail: "ConnectionStrings not set", statusCode: 500);
 
@@ -12632,7 +12645,7 @@ app.MapPost("/api/admin/wipe", async (HttpRequest req) =>
     {
         return Results.Problem(title: "Wipe failed", detail: ex.Message, statusCode: 500);
     }
-});
+}).RequireAuthorization("IsSignedIn");
 
 // Admin: list click attribution entries with filters and pagination
 app.MapGet("/api/admin/clicks", async (
