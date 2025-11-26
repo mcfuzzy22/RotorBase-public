@@ -33,6 +33,12 @@
         @if (_showAuth)
         {
             <div class="card space-y-4 bg-surface/80 p-4 shadow-sm ring-1 ring-border/60">
+                @if (!string.IsNullOrWhiteSpace(_success))
+                {
+                    <div class="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
+                        @_success
+                    </div>
+                }
                 <div>
                     <label class="label uppercase tracking-wide text-xs text-foreground/60">Email</label>
                     <input class="input"
@@ -81,6 +87,10 @@
                 }
             </div>
         }
+        @if (!_showAuth && !string.IsNullOrWhiteSpace(_success))
+        {
+            <div class="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">@_success</div>
+        }
     }
 </div>
 
@@ -92,6 +102,7 @@
     private string? _signupDisplayName;
     private bool _signupOptIn = true;
     private string? _error;
+    private string? _success;
     private bool _showAuth;
     private bool _busy;
 
@@ -111,6 +122,7 @@
         if (_busy) return;
         _busy = true;
         _error = null;
+        _success = null;
         try
         {
             var ok = await Session.SignInAsync(_loginEmail?.Trim() ?? string.Empty, _loginPassword ?? string.Empty);
@@ -149,6 +161,10 @@
     {
         _showAuth = !_showAuth;
         _error = null;
+        if (!_showAuth)
+        {
+            _success = null;
+        }
     }
 
     private async Task CreateAccount()
@@ -169,14 +185,16 @@
             var resp = await Http.PostAsJsonAsync("/api/users", payload);
             if (resp.IsSuccessStatusCode)
             {
-                _showAuth = false;
+                _error = null;
+                _success = "Thanks! Check your email to verify your account before signing in.";
                 _busy = false;
-                await SignIn();
+                _loginPassword = string.Empty;
                 return;
             }
             else if (resp.StatusCode == HttpStatusCode.Conflict)
             {
                 _error = "An account with that email already exists.";
+                _success = null;
             }
             else
             {
@@ -199,11 +217,13 @@
                     "email_send_failed" => "We couldn’t send the verification email. Check that the address is allowed or try again later.",
                     _ => $"Signup failed: {(int)resp.StatusCode} {resp.ReasonPhrase}. {content}"
                 };
+                _success = null;
             }
         }
         catch (Exception ex)
         {
             _error = ex.Message;
+            _success = null;
         }
         finally
         {

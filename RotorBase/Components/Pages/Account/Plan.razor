@@ -44,8 +44,8 @@ else
     {
         <div class="mb-4 flex flex-col items-start gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-amber-900 md:flex-row md:items-center">
             <div class="grow">
-                <div class="font-semibold">Verify your email to unlock alerts.</div>
-                <div class="text-xs text-amber-800">Price alerts and notifications only go to verified addresses.</div>
+                <div class="font-semibold">Verify your email to manage your plan.</div>
+                <div class="text-xs text-amber-800">Upgrading or downgrading plans and creating builds require a verified email address.</div>
                 @if (!string.IsNullOrEmpty(_resendSuccess))
                 {
                     <div class="mt-1 text-xs text-emerald-700">@_resendSuccess</div>
@@ -171,7 +171,7 @@ else
                     <div class="mt-auto pt-3">
                         <button class="w-full rounded-md px-3 py-2 text-xs font-medium text-white disabled:cursor-not-allowed disabled:opacity-60
                                        @(isCurrent ? "border border-gray-300 bg-white text-gray-700 hover:bg-gray-50" : "bg-indigo-600 hover:bg-indigo-700")"
-                                disabled="@(isCurrent || _changing || disableSelection)"
+                                disabled="@(isCurrent || _changing || disableSelection || RequiresVerification)"
                                 @onclick="() => OnPlanSelected(plan)">
                             @(_changing && !isCurrent ? busyText : actionText)
                         </button>
@@ -179,6 +179,10 @@ else
                         @if (disableSelection)
                         {
                             <div class="mt-2 text-xs text-gray-500">@CancelToFreeMessage</div>
+                        }
+                        else if (RequiresVerification && !isCurrent)
+                        {
+                            <div class="mt-2 text-xs text-gray-500">Verify your email to change plans.</div>
                         }
                     </div>
                 </div>
@@ -252,10 +256,12 @@ else
     string? _optInError;
     string? _optInSuccess;
     string? _cancelMessage;
-    bool _cancelSuccess;
-    bool _resendingVerification;
-    string? _resendSuccess;
-    string? _resendError;
+bool _cancelSuccess;
+bool _resendingVerification;
+string? _resendSuccess;
+string? _resendError;
+
+    bool RequiresVerification => Session.IsSignedIn && !Session.EmailVerified;
 
     protected override async Task OnInitializedAsync()
     {
@@ -380,6 +386,13 @@ else
         if (_changing || plan is null)
             return;
 
+        if (!Session.EmailVerified)
+        {
+            _error = "Verify your email to change plans.";
+            StateHasChanged();
+            return;
+        }
+
         _error = null;
         _cancelMessage = null;
         _cancelSuccess = false;
@@ -406,6 +419,12 @@ else
     async Task ChangePlan(string planCode)
     {
         if (_changing || string.IsNullOrWhiteSpace(planCode)) return;
+        if (!Session.EmailVerified)
+        {
+            _error = "Verify your email to change plans.";
+            StateHasChanged();
+            return;
+        }
         _changing = true;
         _error = null;
         _cancelMessage = null;
@@ -423,6 +442,10 @@ else
                 else if (detail.Contains("paid_plan_requires_cancel", StringComparison.OrdinalIgnoreCase))
                 {
                     _error = CancelToFreeMessage;
+                }
+                else if (detail.Contains("email_not_verified", StringComparison.OrdinalIgnoreCase))
+                {
+                    _error = "Verify your email to change plans.";
                 }
                 else
                 {
@@ -451,6 +474,13 @@ else
         if (string.IsNullOrWhiteSpace(planCode))
             return;
 
+        if (!Session.EmailVerified)
+        {
+            _error = "Verify your email to change plans.";
+            StateHasChanged();
+            return;
+        }
+
         _changing = true;
         _error = null;
         _cancelMessage = null;
@@ -469,6 +499,10 @@ else
                 else if (detail.Contains("unknown_plan_code", StringComparison.OrdinalIgnoreCase))
                 {
                     _error = "Plan is not recognized by billing. Refresh and try again.";
+                }
+                else if (detail.Contains("email_not_verified", StringComparison.OrdinalIgnoreCase))
+                {
+                    _error = "Verify your email to change plans.";
                 }
                 else
                 {

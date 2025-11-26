@@ -16,14 +16,11 @@
 @implements IDisposable
 @implements IAsyncDisposable
 
-<PageTitle>RotorBase Builder</PageTitle>
+<PageTitle>BoostedRotary.com Builder</PageTitle>
 
 <HeadContent>
     <link rel="stylesheet" href="/css/engine3d.css" />
 </HeadContent>
-
-<!-- HEADER -->
-<img src="/favicon.png" alt="RotorBase" class="h-12" />
 
 <SaveBar Draft="IsDraft"
          IsSignedIn="Session.IsSignedIn"
@@ -35,6 +32,13 @@
 @if (Session.IsSignedIn)
 {
   <AwardPings />
+}
+
+@if (Session.IsSignedIn && !Session.EmailVerified)
+{
+  <div class="my-3 rounded-md border border-amber-200 bg-amber-50 px-4 py-2 text-sm text-amber-800" role="alert">
+    Verify your email to create new builds and manage your plan.
+  </div>
 }
 
 <!-- ALERTS -->
@@ -98,9 +102,9 @@
       </div>
 
       <div class="flex items-center gap-3">
-        <button class="inline-flex items-center rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
+                <button class="inline-flex items-center rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
                 @onclick="NewBuild"
-                disabled="@(CreatingBuild || !Session.IsSignedIn || !CanCreateAnotherBuild || TreeId is null)">
+                disabled="@(CreatingBuild || !Session.IsSignedIn || !CanCreateAnotherBuild || TreeId is null || (Session.IsSignedIn && !Session.EmailVerified))">
           @(CreatingBuild ? "Creating..." : "Create Build")
         </button>
 
@@ -2727,7 +2731,7 @@ record PartOptionVm(
                     var text = message.GetString();
                     if (!string.IsNullOrWhiteSpace(text))
                     {
-                        return text!;
+                        return MapFriendlyError(text!);
                     }
                 }
 
@@ -2736,7 +2740,7 @@ record PartOptionVm(
                     var text = error.GetString();
                     if (!string.IsNullOrWhiteSpace(text))
                     {
-                        return text!;
+                        return MapFriendlyError(text!);
                     }
                 }
             }
@@ -2748,6 +2752,12 @@ record PartOptionVm(
 
         return fallback;
     }
+
+    static string MapFriendlyError(string value) => value switch
+    {
+        "email_not_verified" => "Verify your email to create or duplicate builds.",
+        _ => value
+    };
 
     static string FormatCurrency(decimal? value)
         => value.HasValue ? FormattableString.Invariant($"${value.Value:0.00}") : "—";

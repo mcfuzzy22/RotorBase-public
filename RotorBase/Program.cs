@@ -5,6 +5,7 @@ using System.Security.Claims;
 using System.Security.Cryptography;
 using System.Text;
 using System.Linq;
+using System.Net;
 using System.Net.Mail;
 using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
@@ -84,11 +85,23 @@ builder.Services.AddRazorComponents()
 builder.Services.AddHttpContextAccessor();
 builder.Services.AddHttpClient("self", (sp, client) =>
 {
+    var config = sp.GetRequiredService<IConfiguration>();
     var accessor = sp.GetRequiredService<IHttpContextAccessor>();
     var req = accessor.HttpContext?.Request;
-    if (req is not null)
+    string? baseUrl = null;
+
+    if (req is not null && req.Host.HasValue)
     {
-        client.BaseAddress = new Uri($"{req.Scheme}://{req.Host}");
+        baseUrl = $"{req.Scheme}://{req.Host}";
+    }
+    else
+    {
+        baseUrl = config["App:InternalBaseUrl"] ?? config["App:BaseUrl"];
+    }
+
+    if (!string.IsNullOrWhiteSpace(baseUrl))
+    {
+        client.BaseAddress = new Uri(baseUrl);
     }
 });
 builder.Services.AddHttpClient("mailgun");
@@ -96,7 +109,6 @@ builder.Services.AddScoped(sp => sp.GetRequiredService<IHttpClientFactory>().Cre
 builder.Services.AddScoped<ProtectedLocalStorage>();
 builder.Services.AddScoped<UserSession>();
 builder.Services.AddScoped<CompareTrayService>();
-builder.Services.AddScoped<ThemeService>();
 builder.Services.AddScoped<ToastService>();
 builder.Services.Configure<MailOptions>(builder.Configuration.GetSection("Mail"));
 builder.Services.AddSingleton<IEmailSender>(EmailSenderFactory.Create);
@@ -647,10 +659,17 @@ async Task EnsureUserAccountTableAsync(MySqlConnection conn, CancellationToken c
     await EnsureUserColumnAsync(conn, ct, "email_bounced", "ALTER TABLE UserAccount ADD COLUMN email_bounced TINYINT(1) NOT NULL DEFAULT 0 AFTER email_verification_expires");
     await EnsureUserColumnAsync(conn, ct, "email_unsubscribed", "ALTER TABLE UserAccount ADD COLUMN email_unsubscribed TINYINT(1) NOT NULL DEFAULT 0 AFTER email_bounced");
 
-    const string indexSql = "CREATE INDEX IF NOT EXISTS ix_user_email_verification_token ON UserAccount(email_verification_token)";
+    const string indexSql = "CREATE INDEX ix_user_email_verification_token ON UserAccount(email_verification_token)";
     await using (var indexCmd = new MySqlCommand(indexSql, conn))
     {
-        await indexCmd.ExecuteNonQueryAsync(ct);
+        try
+        {
+            await indexCmd.ExecuteNonQueryAsync(ct);
+        }
+        catch (MySqlException ex) when (ex.Number == 1061)
+        {
+            // Index already exists; safe to ignore.
+        }
     }
 
     static async Task EnsureUserColumnAsync(MySqlConnection connection, CancellationToken token, string columnName, string alterSql)
@@ -1866,16 +1885,30 @@ async Task EnsureEngineFamilyTreeSchemaAsync(MySqlConnection conn, CancellationT
         await tableCmd.ExecuteNonQueryAsync(ct);
     }
 
-    const string treeIndexSql = "CREATE INDEX IF NOT EXISTS ix_eft_tree ON EngineFamilyTree(tree_id);";
+    const string treeIndexSql = "CREATE INDEX ix_eft_tree ON EngineFamilyTree(tree_id);";
     await using (var treeIdx = new MySqlCommand(treeIndexSql, conn))
     {
-        await treeIdx.ExecuteNonQueryAsync(ct);
+        try
+        {
+            await treeIdx.ExecuteNonQueryAsync(ct);
+        }
+        catch (MySqlException ex) when (ex.Number == 1061)
+        {
+            // Index already exists.
+        }
     }
 
-    const string defaultIndexSql = "CREATE INDEX IF NOT EXISTS ix_eft_engine_default ON EngineFamilyTree(engine_family_id, is_default);";
+    const string defaultIndexSql = "CREATE INDEX ix_eft_engine_default ON EngineFamilyTree(engine_family_id, is_default);";
     await using (var defaultIdx = new MySqlCommand(defaultIndexSql, conn))
     {
-        await defaultIdx.ExecuteNonQueryAsync(ct);
+        try
+        {
+            await defaultIdx.ExecuteNonQueryAsync(ct);
+        }
+        catch (MySqlException ex) when (ex.Number == 1061)
+        {
+            // Index already exists.
+        }
     }
 
     const string viewSql = @"CREATE OR REPLACE VIEW v_engine_default_tree AS
@@ -1985,16 +2018,30 @@ async Task EnsurePriceWatchTableAsync(MySqlConnection conn, CancellationToken ct
     await EnsurePriceWatchColumnAsync(conn, ct, "verify_token", "ALTER TABLE PriceWatch ADD COLUMN verify_token CHAR(64) NULL AFTER is_verified");
     await EnsurePriceWatchColumnAsync(conn, ct, "verify_expires", "ALTER TABLE PriceWatch ADD COLUMN verify_expires DATETIME NULL AFTER verify_token");
 
-    const string indexSql = "CREATE INDEX IF NOT EXISTS ix_pricewatch_part ON PriceWatch(part_id, active);";
+    const string indexSql = "CREATE INDEX ix_pricewatch_part ON PriceWatch(part_id, active);";
     await using (var indexCmd = new MySqlCommand(indexSql, conn))
     {
-        await indexCmd.ExecuteNonQueryAsync(ct);
+        try
+        {
+            await indexCmd.ExecuteNonQueryAsync(ct);
+        }
+        catch (MySqlException ex) when (ex.Number == 1061)
+        {
+            // Already exists.
+        }
     }
 
-    const string verifyIndexSql = "CREATE INDEX IF NOT EXISTS ix_pricewatch_verify_token ON PriceWatch(verify_token);";
+    const string verifyIndexSql = "CREATE INDEX ix_pricewatch_verify_token ON PriceWatch(verify_token);";
     await using (var verifyIndexCmd = new MySqlCommand(verifyIndexSql, conn))
     {
-        await verifyIndexCmd.ExecuteNonQueryAsync(ct);
+        try
+        {
+            await verifyIndexCmd.ExecuteNonQueryAsync(ct);
+        }
+        catch (MySqlException ex) when (ex.Number == 1061)
+        {
+            // Already exists.
+        }
     }
 
     static async Task EnsurePriceWatchColumnAsync(MySqlConnection connection, CancellationToken token, string columnName, string alterSql)
@@ -2035,7 +2082,9 @@ static string BuildAbsoluteUrl(IConfiguration configuration, HttpRequest request
         return baseUrl;
     }
 
-    if (Uri.TryCreate(path, UriKind.Absolute, out var absolute))
+    if (Uri.TryCreate(path, UriKind.Absolute, out var absolute) &&
+        (string.Equals(absolute.Scheme, Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase) ||
+         string.Equals(absolute.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase)))
     {
         return absolute.ToString();
     }
@@ -2345,10 +2394,17 @@ async Task EnsureBillingTablesAsync(MySqlConnection conn, CancellationToken ct)
         await cmd.ExecuteNonQueryAsync(ct);
     }
 
-    const string customerIndexSql = "CREATE INDEX IF NOT EXISTS ix_billing_customer_stripe ON BillingCustomer(stripe_customer_id)";
+    const string customerIndexSql = "CREATE INDEX ix_billing_customer_stripe ON BillingCustomer(stripe_customer_id)";
     await using (var indexCmd = new MySqlCommand(customerIndexSql, conn))
     {
-        await indexCmd.ExecuteNonQueryAsync(ct);
+        try
+        {
+            await indexCmd.ExecuteNonQueryAsync(ct);
+        }
+        catch (MySqlException ex) when (ex.Number == 1061) // duplicate key name
+        {
+            // Index already exists; safe to ignore.
+        }
     }
 }
 
@@ -2421,6 +2477,20 @@ async Task SaveBillingCustomerAsync(string? connString, long userId, string cust
     await cmd.ExecuteNonQueryAsync(ct);
 }
 
+async Task RemoveBillingCustomerAsync(string? connString, long userId, CancellationToken ct)
+{
+    if (string.IsNullOrWhiteSpace(connString))
+        return;
+
+    await using var conn = new MySqlConnection(connString);
+    await conn.OpenAsync(ct);
+    await EnsureBillingTablesAsync(conn, ct);
+
+    await using var cmd = new MySqlCommand("DELETE FROM BillingCustomer WHERE user_id=@uid", conn);
+    cmd.Parameters.AddWithValue("@uid", userId);
+    await cmd.ExecuteNonQueryAsync(ct);
+}
+
 async Task SaveBillingSubscriptionAsync(string? connString, long userId, string subscriptionId, string planCode, string status, DateTime? periodEnd, CancellationToken ct)
 {
     if (string.IsNullOrWhiteSpace(connString) || string.IsNullOrWhiteSpace(subscriptionId))
@@ -2441,6 +2511,15 @@ async Task SaveBillingSubscriptionAsync(string? connString, long userId, string 
     cmd.Parameters.AddWithValue("@status", status);
     cmd.Parameters.AddWithValue("@periodEnd", (object?)periodEnd ?? DBNull.Value);
     await cmd.ExecuteNonQueryAsync(ct);
+}
+
+async Task<bool> IsUserEmailVerifiedAsync(MySqlConnection conn, long userId, CancellationToken ct)
+{
+    await EnsureUserAccountTableAsync(conn, ct);
+    await using var cmd = new MySqlCommand("SELECT email_verified_at FROM UserAccount WHERE user_id=@uid LIMIT 1", conn);
+    cmd.Parameters.AddWithValue("@uid", userId);
+    var result = await cmd.ExecuteScalarAsync(ct);
+    return result is not null && result != DBNull.Value;
 }
 
 async Task<long?> FindUserIdByCustomerAsync(string? connString, string customerId, CancellationToken ct)
@@ -3403,7 +3482,8 @@ app.MapGet("/api/builds/{buildId:long}/categories", async (
                  CAST(s.slot_id AS SIGNED)     AS SlotId,
                  s.`key`                       AS SlotKey,
                  s.gltf_node_path              AS GltfNodePath,
-                 ss.`name`                     AS SubsystemName
+                 ss.`name`                     AS SubsystemName,
+                 COALESCE(ss.sort_order, 0)    AS SubsystemOrder
             FROM Build b
             JOIN Slot s ON s.engine_family_id = b.engine_family_id
             JOIN PartSlot ps ON ps.slot_id = s.slot_id AND ps.category_id IS NOT NULL AND ps.allow = 1
@@ -3429,7 +3509,7 @@ app.MapGet("/api/builds/{buildId:long}/categories", async (
                            )
                       )
                  )
-        ORDER BY ss.sort_order, c.`name`, s.`key`;",
+        ORDER BY SubsystemOrder, c.`name`, s.`key`;",
         new { buildId },
         cancellationToken: ct));
 
@@ -13397,6 +13477,7 @@ app.MapPost("/api/admin/plans", async (HttpContext ctx, CancellationToken ct) =>
         await using var conn = new MySqlConnection(connectionString);
         await conn.OpenAsync(ct);
         await EnsurePlanTablesAsync(conn, ct);
+
         await using var tx = await conn.BeginTransactionAsync(ct);
 
         long planId;
@@ -13764,7 +13845,6 @@ app.MapPost("/api/users", async (CreateUserRequest body, IEmailSender emailSende
         await tx.CommitAsync(ct);
 
         var accountEmail = persistedEmail ?? email;
-        var token = GenerateJwt(userId, accountEmail!, displayName, isAdmin, emailVerified, isBanned);
 
         if (!emailVerified && !string.IsNullOrWhiteSpace(accountEmail))
         {
@@ -13803,18 +13883,13 @@ app.MapPost("/api/users", async (CreateUserRequest body, IEmailSender emailSende
 
         return Results.Json(new
         {
-            token,
+            pending_verification = true,
+            verify_by = verificationExpires,
             user = new
             {
                 user_id = userId,
                 email = accountEmail,
-                display_name = displayName,
-                is_admin = isAdmin,
-                email_opt_in = persistedOptIn,
-                email_verified = emailVerified,
-                email_bounced = emailBounced,
-                email_unsubscribed = emailUnsubscribed,
-                is_banned = isBanned
+                email_opt_in = persistedOptIn
             }
         });
     }
@@ -13865,6 +13940,9 @@ app.MapPost("/api/auth/login", async (LoginRequest body, CancellationToken ct) =
 
         if (isBanned)
             return Results.Json(new { error = "account_banned" }, statusCode: StatusCodes.Status403Forbidden);
+
+        if (!emailVerified)
+            return Results.Json(new { error = "email_not_verified" }, statusCode: StatusCodes.Status403Forbidden);
 
         var token = GenerateJwt(userId, persistedEmail ?? email!, displayName, isAdmin, emailVerified, isBanned);
         return Results.Json(new
@@ -14437,6 +14515,9 @@ app.MapPost("/api/billing/checkout", async (HttpContext ctx, IConfiguration cfg,
         await EnsurePlanTablesAsync(conn, ct);
         await EnsureBillingTablesAsync(conn, ct);
 
+        if (!await IsUserEmailVerifiedAsync(conn, userId.Value, ct))
+            return Results.Json(new { error = "email_not_verified" }, statusCode: StatusCodes.Status403Forbidden);
+
         await using (var priceCmd = new MySqlCommand("SELECT monthly_price, features_json FROM Plan WHERE code=@code AND is_archived = 0", conn))
         {
             priceCmd.Parameters.AddWithValue("@code", normalizedCode);
@@ -14501,8 +14582,46 @@ app.MapPost("/api/billing/checkout", async (HttpContext ctx, IConfiguration cfg,
 
     var customerService = new CustomerService();
 
-    if (string.IsNullOrWhiteSpace(customerId))
+    bool IsMissingCustomer(StripeException ex)
     {
+        if (ex.HttpStatusCode == HttpStatusCode.NotFound)
+            return true;
+
+        var message = ex.StripeError?.Message;
+        if (!string.IsNullOrWhiteSpace(message) && message.Contains("No such customer", StringComparison.OrdinalIgnoreCase))
+            return true;
+
+        var code = ex.StripeError?.Code;
+        return !string.IsNullOrWhiteSpace(code) && string.Equals(code, "resource_missing", StringComparison.OrdinalIgnoreCase);
+    }
+
+    async Task<string> EnsureCustomerAsync(string? existingId)
+    {
+        if (!string.IsNullOrWhiteSpace(existingId))
+        {
+            try
+            {
+                if (!string.IsNullOrWhiteSpace(email))
+                {
+                    var updateOptions = new CustomerUpdateOptions { Email = email };
+                    await customerService.UpdateAsync(existingId, updateOptions, cancellationToken: ct);
+                }
+                else
+                {
+                    await customerService.GetAsync(existingId, cancellationToken: ct);
+                }
+
+                await SaveBillingCustomerAsync(connectionString, userId.Value, existingId, ct);
+                return existingId;
+            }
+            catch (StripeException ex) when (IsMissingCustomer(ex))
+            {
+                app.Logger.LogInformation("Stored Stripe customer {CustomerId} missing; recreating for user {UserId}", existingId, userId.Value);
+                await RemoveBillingCustomerAsync(connectionString, userId.Value, ct);
+                existingId = null;
+            }
+        }
+
         var createOptions = new CustomerCreateOptions
         {
             Email = string.IsNullOrWhiteSpace(email) ? null : email,
@@ -14513,31 +14632,18 @@ app.MapPost("/api/billing/checkout", async (HttpContext ctx, IConfiguration cfg,
         };
 
         var customer = await customerService.CreateAsync(createOptions, cancellationToken: ct);
-        customerId = customer.Id;
-        await SaveBillingCustomerAsync(connectionString, userId.Value, customerId, ct);
+        await SaveBillingCustomerAsync(connectionString, userId.Value, customer.Id, ct);
+        return customer.Id;
     }
-    else
-    {
-        if (!string.IsNullOrWhiteSpace(email))
-        {
-            try
-            {
-                var updateOptions = new CustomerUpdateOptions { Email = email };
-                await customerService.UpdateAsync(customerId, updateOptions, cancellationToken: ct);
-            }
-            catch (StripeException ex)
-            {
-                app.Logger.LogDebug(ex, "Stripe customer update failed for {CustomerId}", customerId);
-            }
-        }
-        await SaveBillingCustomerAsync(connectionString, userId.Value, customerId, ct);
-    }
+
+    customerId = await EnsureCustomerAsync(customerId);
 
     var options = new CheckoutSessionCreateOptions
     {
         Mode = "subscription",
         SuccessUrl = string.Concat(baseUrl, "/account/plan?success=1"),
         CancelUrl = string.Concat(baseUrl, "/account/plan?canceled=1"),
+        PaymentMethodTypes = new List<string> { "card" },
         LineItems = new List<CheckoutSessionLineItemOptions>
         {
             new()
@@ -14772,6 +14878,10 @@ app.MapPost("/api/billing/portal", async (HttpContext ctx, IConfiguration cfg, C
     {
         await conn.OpenAsync(ct);
         await EnsureBillingTablesAsync(conn, ct);
+        await EnsureUserAccountTableAsync(conn, ct);
+
+        if (!await IsUserEmailVerifiedAsync(conn, userId.Value, ct))
+            return Results.Json(new { error = "email_not_verified" }, statusCode: StatusCodes.Status403Forbidden);
 
         await using var cmd = new MySqlCommand("SELECT stripe_customer_id FROM BillingCustomer WHERE user_id=@uid", conn);
         cmd.Parameters.AddWithValue("@uid", userId.Value);
@@ -14826,6 +14936,10 @@ app.MapPost("/api/billing/cancel", async (HttpContext ctx, CancellationToken ct)
     {
         await conn.OpenAsync(ct);
         await EnsureBillingTablesAsync(conn, ct);
+        await EnsureUserAccountTableAsync(conn, ct);
+
+        if (!await IsUserEmailVerifiedAsync(conn, userId.Value, ct))
+            return Results.Json(new { error = "email_not_verified" }, statusCode: StatusCodes.Status403Forbidden);
 
         await using var cmd = new MySqlCommand("SELECT stripe_subscription_id, plan_code FROM BillingSubscription WHERE user_id=@uid", conn);
         cmd.Parameters.AddWithValue("@uid", userId.Value);
@@ -14921,6 +15035,9 @@ app.MapPost("/api/builds", async (HttpContext ctx, IGamification gamification, C
         await EnsureBuildColumnsAsync(conn, ct);
         await EnsurePlanTablesAsync(conn, ct);
 
+        if (!await IsUserEmailVerifiedAsync(conn, userId.Value, ct))
+            return Results.Json(new { error = "email_not_verified" }, statusCode: StatusCodes.Status403Forbidden);
+
         var resolvedTree = await ResolveDefaultTreeForEngineAsync(conn, engineFamilyId, ct);
         if (!resolvedTree.EngineExists)
             return Results.BadRequest(new { error = "engine_family_id not found" });
@@ -15003,6 +15120,9 @@ app.MapPost("/api/builds/{id:long}/duplicate", async (long id, HttpContext ctx, 
         await conn.OpenAsync(ct);
         await EnsureBuildColumnsAsync(conn, ct);
         await EnsurePlanTablesAsync(conn, ct);
+
+        if (!await IsUserEmailVerifiedAsync(conn, userId.Value, ct))
+            return Results.Json(new { error = "email_not_verified" }, statusCode: StatusCodes.Status403Forbidden);
 
         long? sourceOwnerId = null;
         long engineFamilyId;

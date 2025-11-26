@@ -1,7 +1,7 @@
 @page "/"
 @rendermode InteractiveServer
 
-<PageTitle>Home • RotorBase</PageTitle>
+<PageTitle>Home • BoostedRotary.com</PageTitle>
 
 <div class="relative min-h-[calc(100vh-4rem)] bg-background text-foreground">
     <div aria-hidden="true" class="pointer-events-none absolute inset-0 bg-radial"></div>
@@ -28,7 +28,6 @@
             <div class="mt-6 flex flex-wrap items-center gap-3">
                 <NavLink href="/builder" class="btn btn-primary">Open Builder</NavLink>
                 <NavLink href="/shop" class="btn btn-soft">Go to Shop</NavLink>
-                <button @onclick="ToggleThemeAsync" class="btn btn-ghost" title="Toggle theme">🌙 / ☀️ Theme</button>
             </div>
         </div>
     </section>
@@ -59,7 +58,3 @@
     </section>
 </div>
 
-@code {
-    [Inject] private ThemeService Theme { get; set; } = default!;
-    private async Task ToggleThemeAsync() => await Theme.ToggleAsync();
-}

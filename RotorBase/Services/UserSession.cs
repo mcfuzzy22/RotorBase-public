@@ -78,6 +78,11 @@ public sealed class UserSession
                 {
                     throw new InvalidOperationException("This account has been banned.");
                 }
+
+                if (string.Equals(apiError?.Error, "email_not_verified", StringComparison.OrdinalIgnoreCase))
+                {
+                    throw new InvalidOperationException("Check your inbox and verify your email before signing in.");
+                }
             }
 
             _logger.LogWarning("Sign-in failed with status code {StatusCode}", response.StatusCode);

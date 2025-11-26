@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
+  <defs>
+    <linearGradient id="grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#f6352c"/>
+      <stop offset="100%" stop-color="#a40707"/>
+    </linearGradient>
+  </defs>
+  <rect width="256" height="256" rx="36" fill="#0d0d0d"/>
+  <path d="M128 32c7 0 14 3 18 8l86 108c9 11 7 27-4 36l-94 74c-8 6-19 6-27 0l-94-74c-11-9-13-25-4-36l86-108c4-5 11-8 18-8z" fill="#f7f7f7" stroke="#111" stroke-width="10"/>
+  <circle cx="128" cy="130" r="64" fill="#1b1b1b" stroke="#f7f7f7" stroke-width="10"/>
+  <circle cx="128" cy="130" r="34" fill="#0d0d0d" stroke="#f7f7f7" stroke-width="8"/>
+  <g fill="url(#grad)" stroke="#0d0d0d" stroke-width="6">
+    <path d="M128 70 140 122 128 138 116 122z"/>
+    <path d="M186 102 148 126 134 114 148 98z"/>
+    <path d="M197 166 142 150 134 166 148 184z"/>
+    <path d="M128 194 116 142 128 126 140 142z"/>
+    <path d="M70 158 108 134 122 146 108 162z"/>
+    <path d="M59 94 114 110 122 94 108 76z"/>
+  </g>
+  <text x="128" y="228" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="74" font-weight="800" text-anchor="middle" fill="#f7f7f7">BR</text>
+</svg>

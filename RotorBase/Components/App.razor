@@ -6,23 +6,6 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <base href="/" />
     <script>
-        (function () {
-            try {
-                var theme = localStorage.getItem('theme') || 'system';
-                var prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-                var root = document.documentElement;
-                root.classList.remove('dark');
-                if (theme === 'dark' || (theme === 'system' && prefersDark)) {
-                    root.classList.add('dark');
-                }
-                var brand = localStorage.getItem('theme-brand');
-                if (brand) {
-                    root.setAttribute('data-theme', brand);
-                }
-            } catch (e) { }
-        })();
-    </script>
-    <script>
         window.rb = window.rb || {};
         window.rb.sessionId = () => {
             try {
@@ -73,13 +56,12 @@
     <link rel="stylesheet" href="app.css" />
     <link rel="stylesheet" href="RotorBase.styles.css" />
     <link rel="stylesheet" href="css/app.tailwind.build.css" />
-    <link rel="icon" type="image/png" href="favicon.png" />
+    <link rel="icon" type="image/svg+xml" href="favicon.svg" />
     <HeadOutlet />
 </head>
 
 <body>
     <Routes />
-    <script src="js/theme.js"></script>
     <script>
         window.downloadFile = (name, href) => {
             const link = document.createElement('a');

@@ -1,7 +1,7 @@
 @inherits LayoutComponentBase
 @inject UserSession Session
 
-<div class="relative min-h-dvh overflow-hidden bg-background text-foreground">
+<div class="relative min-h-dvh bg-background text-foreground overflow-x-hidden">
     <div aria-hidden="true" class="pointer-events-none absolute inset-0 bg-radial"></div>
     <div aria-hidden="true" class="pointer-events-none absolute inset-x-0 top-0 h-48 bg-grid opacity-40 dark:opacity-20"></div>
 
@@ -9,7 +9,7 @@
         <div class="container flex h-16 items-center justify-between gap-4">
             <NavLink class="inline-flex items-center gap-2 text-sm font-semibold tracking-tight" href="/" Match="NavLinkMatch.All" ActiveClass="">
                 <span class="inline-flex h-2.5 w-2.5 animate-pulse rounded-full bg-primary"></span>
-                <span>RotorBase</span>
+                <span>BoostedRotary.com</span>
             </NavLink>
 
             <nav class="hidden items-center gap-6 text-sm font-medium text-foreground/70 md:flex">
@@ -28,6 +28,7 @@
             </nav>
 
             <div class="flex items-center gap-3">
+                <MobileMenu />
                 @if (Session.IsSignedIn)
                 {
                     <GamChip />
@@ -35,12 +36,10 @@
                         @(!string.IsNullOrWhiteSpace(Session.DisplayName) ? Session.DisplayName : Session.Email)
                     </span>
                 }
-                <ThemeToggle />
             </div>
         </div>
     </header>
 
-    <ThemeGuard />
     <ClientBoot />
 
     <div class="relative z-10">
@@ -58,7 +57,7 @@
 
     <footer class="relative z-10 border-t border-border/60 bg-surface/80 backdrop-blur">
         <div class="container flex flex-col gap-4 py-6 text-sm text-foreground/70 sm:flex-row sm:items-center sm:justify-between">
-            <p>© @DateTime.Now.Year RotorBase. All rights reserved.</p>
+            <p>© @DateTime.Now.Year BoostedRotary.com. All rights reserved.</p>
             <div class="flex items-center gap-4">
                 <NavLink class="hover:text-foreground" href="/privacy">Privacy</NavLink>
                 <NavLink class="hover:text-foreground" href="/terms">Terms</NavLink>
