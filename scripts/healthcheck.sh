@@ -7,8 +7,26 @@ PUBLIC_URL="${PUBLIC_URL:-https://boostedrotary.com/}"
 
 systemctl is-active --quiet "$SERVICE_NAME"
 
-local_status="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 15 "$LOCAL_URL")"
-public_status="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 20 "$PUBLIC_URL")"
+check_url() {
+  local url="$1"
+  local timeout="$2"
+  local status
+
+  for _ in {1..15}; do
+    status="$(curl -sS -o /dev/null -w '%{http_code}' --max-time "$timeout" "$url" 2>/dev/null || true)"
+    if [[ "$status" == "200" ]]; then
+      echo "$status"
+      return 0
+    fi
+    sleep 1
+  done
+
+  echo "${status:-000}"
+  return 1
+}
+
+local_status="$(check_url "$LOCAL_URL" 15 || true)"
+public_status="$(check_url "$PUBLIC_URL" 20 || true)"
 
 if [[ "$local_status" != "200" ]]; then
   echo "Local health check failed: $LOCAL_URL returned $local_status" >&2
