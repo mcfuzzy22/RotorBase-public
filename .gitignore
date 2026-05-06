@@ -34,6 +34,7 @@ coverage/
 # Local secrets / env files
 appsettings.*.local.json
 appsettings.Local.json
+appsettings.Production.json
 .env
 .env.*
 *.secrets.json
