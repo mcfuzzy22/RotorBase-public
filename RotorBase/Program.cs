@@ -4170,6 +4170,7 @@ app.MapGet("/api/shop", async (
     decimal? min,
     decimal? max,
     int? in_stock,
+    int? exclude_kits,
     string sort,
     string dir,
     int page,
@@ -4184,6 +4185,7 @@ app.MapGet("/api/shop", async (
     brand = string.IsNullOrWhiteSpace(brand) ? null : brand.Trim();
     sort = string.IsNullOrWhiteSpace(sort) ? "price" : sort.Trim();
     dir = string.IsNullOrWhiteSpace(dir) ? "asc" : dir.Trim();
+    var excludeKits = exclude_kits == 1;
 
     page = Math.Max(1, page == 0 ? 1 : page);
     pageSize = Math.Clamp(pageSize == 0 ? 24 : pageSize, 1, 60);
@@ -4253,8 +4255,9 @@ filtered AS (
   FROM Part p
   LEFT JOIN Brand b ON b.brand_id = p.brand_id
   LEFT JOIN best bo ON bo.part_id = p.part_id
-  WHERE
+    WHERE
     (@q IS NULL OR p.sku LIKE CONCAT('%', @q, '%') OR p.name LIKE CONCAT('%', @q, '%'))
+    AND (@excludeKits = FALSE OR p.is_kit = FALSE)
     AND (@brand IS NULL OR b.name = @brand)
     AND (@category IS NULL OR EXISTS (
         SELECT 1
@@ -4287,6 +4290,7 @@ filtered AS (
             min,
             max,
             instock = in_stock,
+            excludeKits,
             ps = pageSize,
             off = offset
         };
@@ -5442,6 +5446,7 @@ app.MapGet("/api/picker/engines/{engineFamilyId:long}/components", async (long e
                       FROM PartCategory pc
                       JOIN Part p ON p.part_id = pc.part_id
                      WHERE pc.category_id = c.category_id
+                       AND p.is_kit = FALSE
                        AND (
                             NOT EXISTS (
                                 SELECT 1

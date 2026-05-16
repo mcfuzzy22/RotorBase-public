@@ -5,6 +5,8 @@
 @using System.Text.Json
 @using System.Text.Json.Serialization
 @inject HttpClient Http
+@inject UserSession Session
+@inject NavigationManager Nav
 
 <PageTitle>Rotary Part Picker</PageTitle>
 
@@ -18,7 +20,7 @@
             </p>
         </div>
         <div class="w-full md:w-72">
-            <label class="label">Core / engine family</label>
+            <label class="label">Engine core / family</label>
             <select class="input" value="@SelectedEngineId" @onchange="OnEngineChangedAsync" disabled="@IsLoadingEngines">
                 @foreach (var engine in Engines)
                 {
@@ -42,6 +44,9 @@
                 <span class="badge">@SelectedCount / @ComponentCount selected</span>
                 <span class="badge">@FormatMoney(SelectedTotal)</span>
                 <span class="badge">@NeedsCatalogCount need catalog</span>
+                <button class="btn btn-primary h-8 px-3 text-xs" @onclick="SaveBuildAsync" disabled="@IsSavingBuild">
+                    @(IsSavingBuild ? "Saving..." : "Save Build")
+                </button>
             </div>
         </div>
 
@@ -68,13 +73,19 @@
         }
         else
         {
+            <div class="border-b border-border/60 bg-muted/30 px-4 py-2 text-xs font-medium text-foreground/65">
+                Subsystems start collapsed. Click a subsystem row to expand its component list.
+            </div>
             <div class="divide-y divide-border/60">
                 @foreach (var group in PickerData.groups)
                 {
-                    <details open class="group">
+                    <details class="group">
                         <summary class="flex cursor-pointer select-none items-center justify-between gap-3 bg-surface/70 px-4 py-3 text-sm font-semibold text-foreground">
-                            <span>@group.subsystem_name</span>
-                            <span class="text-xs font-medium text-foreground/60">@group.components.Count components</span>
+                            <span class="flex items-center gap-2">
+                                <span class="inline-block transition group-open:rotate-90">@IconChevron()</span>
+                                <span>@group.subsystem_name</span>
+                            </span>
+                            <span class="text-xs font-medium text-foreground/60">Click to expand · @group.components.Count components</span>
                         </summary>
 
                         <div class="overflow-x-auto">
@@ -149,6 +160,11 @@
                     </details>
                 }
             </div>
+        }
+
+        @if (!string.IsNullOrWhiteSpace(SaveMessage))
+        {
+            <div class="@SaveMessageClass">@SaveMessage</div>
         }
     </section>
 </section>
@@ -230,9 +246,12 @@
     private string PartSearch { get; set; } = string.Empty;
     private string? ErrorMessage { get; set; }
     private string? PartsError { get; set; }
+    private string? SaveMessage { get; set; }
     private bool IsLoadingEngines { get; set; }
     private bool IsLoadingPicker { get; set; }
     private bool IsLoadingParts { get; set; }
+    private bool IsSavingBuild { get; set; }
+    private bool SaveSucceeded { get; set; }
 
     private int ComponentCount => PickerData?.component_count ?? 0;
     private int NeedsCatalogCount => PickerData?.needs_catalog_count ?? 0;
@@ -247,6 +266,9 @@
     private string CompatibilityClass => NeedsCatalogCount == 0
         ? "flex items-center justify-between gap-3 bg-success px-4 py-2 text-sm text-white"
         : "flex items-center justify-between gap-3 bg-warning px-4 py-2 text-sm text-white";
+    private string SaveMessageClass => SaveSucceeded
+        ? "m-4 rounded-md bg-success/10 px-3 py-2 text-sm text-success ring-1 ring-success/25"
+        : "m-4 rounded-md bg-danger/10 px-3 py-2 text-sm text-danger ring-1 ring-danger/25";
 
     protected override async Task OnInitializedAsync()
     {
@@ -336,7 +358,7 @@
         try
         {
             var q = string.IsNullOrWhiteSpace(PartSearch) ? string.Empty : $"&q={Uri.EscapeDataString(PartSearch.Trim())}";
-            var url = $"/api/shop?engine={Uri.EscapeDataString(SelectedEngineCode)}&category={Uri.EscapeDataString(ActiveComponent.category_slug)}{q}&sort=price&dir=asc&page=1&pageSize=12";
+            var url = $"/api/shop?engine={Uri.EscapeDataString(SelectedEngineCode)}&category={Uri.EscapeDataString(ActiveComponent.category_slug)}{q}&exclude_kits=1&sort=price&dir=asc&page=1&pageSize=12";
             var response = await Http.GetFromJsonAsync<ShopResponse>(url, JsonOptions);
             PartRows = response?.Items ?? new();
         }
@@ -356,11 +378,109 @@
         if (ActiveComponent is not null)
             Selections[ActiveComponent.slot_id] = part;
 
+        SaveMessage = null;
         CloseChooser();
     }
 
     private PartRow? GetSelection(long slotId) => Selections.TryGetValue(slotId, out var part) ? part : null;
-    private void ClearSelection(long slotId) => Selections.Remove(slotId);
+    private void ClearSelection(long slotId)
+    {
+        Selections.Remove(slotId);
+        SaveMessage = null;
+    }
+
+    private async Task SaveBuildAsync()
+    {
+        SaveMessage = null;
+        SaveSucceeded = false;
+
+        if (Selections.Count == 0)
+        {
+            SaveMessage = "Choose at least one component before saving.";
+            return;
+        }
+
+        if (!Session.IsSignedIn)
+        {
+            SaveMessage = "Sign in to save this picker as a build.";
+            var uri = new Uri(Nav.Uri);
+            var target = Microsoft.AspNetCore.WebUtilities.QueryHelpers.AddQueryString(uri.GetLeftPart(UriPartial.Path), "auth", "1");
+            Nav.NavigateTo(target, forceLoad: false);
+            return;
+        }
+
+        IsSavingBuild = true;
+
+        try
+        {
+            var buildName = $"{SelectedEngineCode} picker {DateTime.UtcNow:yyyy-MM-dd HH:mm}";
+            var create = await Http.PostAsJsonAsync("/api/builds", new
+            {
+                engine_family_id = SelectedEngineId,
+                name = buildName,
+                is_archived = false,
+                is_shared = false
+            });
+
+            if (!create.IsSuccessStatusCode)
+            {
+                SaveMessage = await BuildErrorMessageAsync(create, "Unable to create build.");
+                return;
+            }
+
+            var created = await create.Content.ReadFromJsonAsync<CreateBuildResponse>(JsonOptions);
+            if (created is null || created.build_id <= 0)
+            {
+                SaveMessage = "Build was created, but the response did not include a build id.";
+                return;
+            }
+
+            var failed = 0;
+            foreach (var selection in Selections)
+            {
+                var response = await Http.PostAsJsonAsync($"/api/builds/{created.build_id}/select", new
+                {
+                    slot_id = selection.Key,
+                    part_id = selection.Value.part_id,
+                    quantity = 1
+                });
+
+                if (!response.IsSuccessStatusCode)
+                    failed++;
+            }
+
+            if (failed > 0)
+            {
+                SaveMessage = $"Saved build {created.build_id}, but {failed} selection(s) could not be saved because of compatibility rules.";
+                return;
+            }
+
+            SaveSucceeded = true;
+            SaveMessage = "Build saved.";
+            Nav.NavigateTo($"/builder/{created.build_id}");
+        }
+        catch (Exception ex)
+        {
+            SaveMessage = $"Unable to save build: {ex.Message}";
+        }
+        finally
+        {
+            IsSavingBuild = false;
+        }
+    }
+
+    private static async Task<string> BuildErrorMessageAsync(HttpResponseMessage response, string fallback)
+    {
+        try
+        {
+            var text = await response.Content.ReadAsStringAsync();
+            return string.IsNullOrWhiteSpace(text) ? fallback : $"{fallback} {text}";
+        }
+        catch
+        {
+            return fallback;
+        }
+    }
     private void CloseChooser()
     {
         ActiveComponent = null;
@@ -376,6 +496,7 @@
 
     private RenderFragment IconLink() => @<svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.1 0l2-2a5 5 0 0 0-7.1-7.1l-1.1 1.1"/><path d="M14 11a5 5 0 0 0-7.1 0l-2 2A5 5 0 0 0 12 20.1l1.1-1.1"/></svg>;
     private RenderFragment IconCheck() => @<svg class="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>;
+    private RenderFragment IconChevron() => @<svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>;
 
     private sealed class EngineOption
     {
@@ -420,6 +541,11 @@
         public string name { get; set; } = string.Empty;
         public string brand { get; set; } = string.Empty;
         public decimal? best_price { get; set; }
+    }
+
+    private sealed class CreateBuildResponse
+    {
+        public long build_id { get; set; }
     }
 
     private sealed class ShopResponse
