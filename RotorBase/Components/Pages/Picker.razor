@@ -7,6 +7,7 @@
 @inject HttpClient Http
 @inject UserSession Session
 @inject NavigationManager Nav
+@inject PickerSelectionState PickerState
 
 <PageTitle>Rotary Part Picker</PageTitle>
 
@@ -177,70 +178,6 @@
     </section>
 </section>
 
-@if (ActiveComponent is not null)
-{
-    <div class="fixed inset-0 z-40 bg-background/60 backdrop-blur-sm"></div>
-    <div class="fixed inset-0 z-50 grid place-items-center p-4">
-        <section class="card flex max-h-[88vh] w-full max-w-3xl flex-col overflow-hidden shadow-xl">
-            <div class="flex items-start justify-between gap-3 border-b border-border/60 px-4 py-3">
-                <div>
-                    <h2 class="text-lg font-semibold">Choose @ActiveComponent.category_name</h2>
-                    <p class="text-sm text-foreground/60">@SelectedEngineCode · @ActiveComponent.slot_name</p>
-                </div>
-                <button class="btn btn-ghost h-8 px-2" @onclick="CloseChooser" aria-label="Close">x</button>
-            </div>
-
-            <div class="border-b border-border/60 p-4">
-                <div class="grid gap-3 md:grid-cols-[1fr_auto]">
-                    <input class="input" placeholder="Filter this component..." @bind="PartSearch" @bind:event="oninput" />
-                    <button class="btn btn-primary" @onclick="LoadPartsAsync" disabled="@IsLoadingParts">Search</button>
-                </div>
-            </div>
-
-            <div class="overflow-y-auto p-4">
-                @if (IsLoadingParts)
-                {
-                    <div class="text-sm text-foreground/70">Searching parts...</div>
-                }
-                else if (!string.IsNullOrWhiteSpace(PartsError))
-                {
-                    <div class="rounded-md bg-danger/10 px-3 py-2 text-sm text-danger ring-1 ring-danger/25">@PartsError</div>
-                }
-                else if (PartRows.Count == 0)
-                {
-                    <div class="rounded-md bg-warning/10 px-3 py-2 text-sm text-warning ring-1 ring-warning/25">
-                        No verified catalog parts for this component yet.
-                    </div>
-                }
-                else
-                {
-                    <div class="space-y-2">
-                        @foreach (var part in PartRows)
-                        {
-                            <article class="grid gap-3 rounded-md border border-border/60 p-3 md:grid-cols-[1fr_auto] md:items-center">
-                                <div>
-                                    <div class="font-semibold">@part.name</div>
-                                    <div class="mt-1 text-xs text-foreground/60">
-                                        @part.brand
-                                        @if (!string.IsNullOrWhiteSpace(part.sku))
-                                        {
-                                            <span> · @part.sku</span>
-                                        }
-                                    </div>
-                                </div>
-                                <div class="flex items-center justify-between gap-3 md:justify-end">
-                                    <span class="font-semibold">@FormatMoney(part.best_price)</span>
-                                    <button class="btn btn-primary h-8 px-3 text-xs" @onclick="() => PickPart(part)">Add</button>
-                                </div>
-                            </article>
-                        }
-                    </div>
-                }
-            </div>
-        </section>
-    </div>
-}
-
 @if (ShowSaveDialog)
 {
     <div class="fixed inset-0 z-40 bg-background/60 backdrop-blur-sm"></div>
@@ -290,32 +227,27 @@
 
 @code {
     private readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
-    private readonly Dictionary<long, PartRow> Selections = new();
-    private readonly Dictionary<long, int> Quantities = new();
 
     private List<EngineOption> Engines { get; set; } = new();
     private PickerResponse? PickerData { get; set; }
-    private PickerComponent? ActiveComponent { get; set; }
-    private List<PartRow> PartRows { get; set; } = new();
     private long SelectedEngineId { get; set; }
     private string SelectedEngineCode => Engines.FirstOrDefault(e => e.engine_family_id == SelectedEngineId)?.code ?? PickerData?.engine_code ?? "Engine";
-    private string PartSearch { get; set; } = string.Empty;
     private string? ErrorMessage { get; set; }
-    private string? PartsError { get; set; }
     private string? SaveMessage { get; set; }
     private string BuildTitle { get; set; } = string.Empty;
     private bool IsLoadingEngines { get; set; }
     private bool IsLoadingPicker { get; set; }
-    private bool IsLoadingParts { get; set; }
     private bool IsSavingBuild { get; set; }
     private bool SaveSucceeded { get; set; }
     private bool ShowSaveDialog { get; set; }
 
     private int ComponentCount => PickerData?.component_count ?? 0;
     private int NeedsCatalogCount => PickerData?.needs_catalog_count ?? 0;
-    private int SelectedCount => Selections.Count;
-    private decimal? SelectedTotal => Selections.Values.Any(v => v.best_price.HasValue)
-        ? Selections.Sum(selection => (selection.Value.best_price ?? 0m) * GetQuantity(selection.Key))
+    private Dictionary<long, PickerPartSelection> Selections => PickerState.Selections;
+    private Dictionary<long, int> Quantities => PickerState.Quantities;
+    private int SelectedCount => PickerState.Selections.Count;
+    private decimal? SelectedTotal => PickerState.Selections.Values.Any(v => v.best_price.HasValue)
+        ? PickerState.Selections.Sum(selection => (selection.Value.best_price ?? 0m) * GetQuantity(selection.Key))
         : null;
     private string PickerUrl => $"https://boostedrotary.com/picker?engine={Uri.EscapeDataString(SelectedEngineCode)}";
     private string CompatibilityText => NeedsCatalogCount == 0
@@ -355,6 +287,7 @@
 
             SelectedEngineId = preferred.engine_family_id;
             BuildTitle = DefaultBuildTitle();
+            PickerState.SetEngine(SelectedEngineId, SelectedEngineCode, clearSelections: false);
             await LoadPickerAsync();
         }
         catch (Exception ex)
@@ -373,8 +306,7 @@
             return;
 
         SelectedEngineId = engineId;
-        Selections.Clear();
-        ActiveComponent = null;
+        PickerState.SetEngine(SelectedEngineId, SelectedEngineCode, clearSelections: true);
         BuildTitle = DefaultBuildTitle();
         await LoadPickerAsync();
     }
@@ -401,55 +333,17 @@
         }
     }
 
-    private async Task StartChoosingAsync(PickerComponent component)
+    private void StartChoosingAsync(PickerComponent component)
     {
-        ActiveComponent = component;
-        PartSearch = string.Empty;
-        await LoadPartsAsync();
+        PickerState.SetEngine(SelectedEngineId, SelectedEngineCode, clearSelections: false);
+        Quantities.TryAdd(component.slot_id, RecommendedQuantity(component));
+        Nav.NavigateTo($"/picker/options/{SelectedEngineId}/{component.slot_id}/{Uri.EscapeDataString(component.category_slug)}");
     }
 
-    private async Task LoadPartsAsync()
-    {
-        if (ActiveComponent is null)
-            return;
-
-        IsLoadingParts = true;
-        PartsError = null;
-
-        try
-        {
-            var q = string.IsNullOrWhiteSpace(PartSearch) ? string.Empty : $"&q={Uri.EscapeDataString(PartSearch.Trim())}";
-            var url = $"/api/shop?engine={Uri.EscapeDataString(SelectedEngineCode)}&category={Uri.EscapeDataString(ActiveComponent.category_slug)}{q}&exclude_kits=1&sort=price&dir=asc&page=1&pageSize=12";
-            var response = await Http.GetFromJsonAsync<ShopResponse>(url, JsonOptions);
-            PartRows = response?.Items ?? new();
-        }
-        catch (Exception ex)
-        {
-            PartsError = $"Unable to load parts: {ex.Message}";
-            PartRows = new();
-        }
-        finally
-        {
-            IsLoadingParts = false;
-        }
-    }
-
-    private void PickPart(PartRow part)
-    {
-        if (ActiveComponent is not null)
-        {
-            Selections[ActiveComponent.slot_id] = part;
-            Quantities.TryAdd(ActiveComponent.slot_id, RecommendedQuantity(ActiveComponent));
-        }
-
-        SaveMessage = null;
-        CloseChooser();
-    }
-
-    private PartRow? GetSelection(long slotId) => Selections.TryGetValue(slotId, out var part) ? part : null;
+    private PickerPartSelection? GetSelection(long slotId) => Selections.TryGetValue(slotId, out var part) ? part : null;
     private void ClearSelection(long slotId)
     {
-        Selections.Remove(slotId);
+        PickerState.ClearSlot(slotId);
         SaveMessage = null;
     }
 
@@ -467,7 +361,7 @@
         SaveMessage = null;
     }
 
-    private decimal? RowEstimatedCost(PickerComponent component, PartRow? selected)
+    private decimal? RowEstimatedCost(PickerComponent component, PickerPartSelection? selected)
         => selected?.best_price is decimal price ? price * GetQuantity(component) : null;
 
     private static int RecommendedQuantity(PickerComponent component)
@@ -619,13 +513,6 @@
             return fallback;
         }
     }
-    private void CloseChooser()
-    {
-        ActiveComponent = null;
-        PartRows.Clear();
-        PartsError = null;
-    }
-
     private string ShopHref(PickerComponent component)
         => $"/shop?engine={Uri.EscapeDataString(SelectedEngineCode)}&category={Uri.EscapeDataString(component.category_slug)}";
 
@@ -672,23 +559,8 @@
         public long candidate_count { get; set; }
     }
 
-    private sealed class PartRow
-    {
-        public long part_id { get; set; }
-        public string sku { get; set; } = string.Empty;
-        public string name { get; set; } = string.Empty;
-        public string brand { get; set; } = string.Empty;
-        public decimal? best_price { get; set; }
-    }
-
     private sealed class CreateBuildResponse
     {
         public long build_id { get; set; }
-    }
-
-    private sealed class ShopResponse
-    {
-        [JsonPropertyName("items")]
-        public List<PartRow>? Items { get; set; }
     }
 }

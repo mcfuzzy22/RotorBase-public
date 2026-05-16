@@ -110,6 +110,7 @@ builder.Services.AddScoped<ProtectedLocalStorage>();
 builder.Services.AddScoped<UserSession>();
 builder.Services.AddScoped<CompareTrayService>();
 builder.Services.AddScoped<ToastService>();
+builder.Services.AddScoped<PickerSelectionState>();
 builder.Services.Configure<MailOptions>(builder.Configuration.GetSection("Mail"));
 builder.Services.AddSingleton<IEmailSender>(EmailSenderFactory.Create);
 
