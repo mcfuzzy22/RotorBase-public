@@ -3483,15 +3483,9 @@ app.MapGet("/api/builds/{buildId:long}/categories", async (
                  s.`key`                       AS SlotKey,
                  s.gltf_node_path              AS GltfNodePath,
                  ss.`name`                     AS SubsystemName,
-                 COALESCE(ss.sort_order, 0)    AS SubsystemOrder
-            FROM Build b
-            JOIN Slot s ON s.engine_family_id = b.engine_family_id
-            JOIN PartSlot ps ON ps.slot_id = s.slot_id AND ps.category_id IS NOT NULL AND ps.allow = 1
-            JOIN Category c ON c.category_id = ps.category_id
-            LEFT JOIN Subsystem ss ON ss.subsystem_id = s.subsystem_id
-           WHERE b.build_id = @buildId
-             AND EXISTS (
-                   SELECT 1
+                 COALESCE(ss.sort_order, 0)    AS SubsystemOrder,
+                 (
+                   SELECT COUNT(DISTINCT p.part_id)
                      FROM PartCategory pc
                      JOIN Part p ON p.part_id = pc.part_id
                     WHERE pc.category_id = c.category_id
@@ -3508,7 +3502,13 @@ app.MapGet("/api/builds/{buildId:long}/categories", async (
                                   AND pf.engine_family_id = b.engine_family_id
                            )
                       )
-                 )
+                 )                              AS CandidateCount
+            FROM Build b
+            JOIN Slot s ON s.engine_family_id = b.engine_family_id
+            JOIN PartSlot ps ON ps.slot_id = s.slot_id AND ps.category_id IS NOT NULL AND ps.allow = 1
+            JOIN Category c ON c.category_id = ps.category_id
+            LEFT JOIN Subsystem ss ON ss.subsystem_id = s.subsystem_id
+           WHERE b.build_id = @buildId
         ORDER BY SubsystemOrder, c.`name`, s.`key`;",
         new { buildId },
         cancellationToken: ct));

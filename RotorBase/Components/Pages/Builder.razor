@@ -282,6 +282,10 @@ else
                       }
                       else if (hasOptions && opts is not null)
                       {
+                        if (opts.Count == 0)
+                        {
+                          <option disabled value="">No verified parts yet</option>
+                        }
                         foreach (var p in opts)
                         {
                           var label = string.IsNullOrWhiteSpace(p.GltfUri) ? $"{p.Name} (no GLB)" : p.Name;
@@ -289,7 +293,13 @@ else
                         }
                       }
                     </select>
-                    <div class="mt-1 text-xs text-gray-400">@slot.SlotKey</div>
+                    <div class="mt-1 flex flex-wrap items-center gap-2 text-xs text-gray-400">
+                      <span>@slot.SlotKey</span>
+                      @if (slot.CandidateCount == 0)
+                      {
+                        <span class="rounded-full bg-amber-50 px-2 py-0.5 font-medium text-amber-700 ring-1 ring-amber-200">needs catalog</span>
+                      }
+                    </div>
                   </div>
                 }
               }
@@ -356,6 +366,10 @@ else
                 }
                 else if (hasOptions && opts is not null)
                 {
+                  if (opts.Count == 0)
+                  {
+                    <option disabled value="">No verified parts yet</option>
+                  }
                   foreach (var p in opts)
                   {
                     var label = string.IsNullOrWhiteSpace(p.GltfUri) ? $"{p.Name} (no GLB)" : p.Name;
@@ -363,7 +377,13 @@ else
                   }
                 }
               </select>
-              <div class="mt-1 text-xs text-gray-400">@slot.SlotKey</div>
+              <div class="mt-1 flex flex-wrap items-center gap-2 text-xs text-gray-400">
+                <span>@slot.SlotKey</span>
+                @if (slot.CandidateCount == 0)
+                {
+                  <span class="rounded-full bg-amber-50 px-2 py-0.5 font-medium text-amber-700 ring-1 ring-amber-200">needs catalog</span>
+                }
+              </div>
             </div>
           }
         </div>
@@ -793,7 +813,8 @@ record CategorySlotVm(
     [property: JsonPropertyName("SlotId")] long SlotId,
     [property: JsonPropertyName("SlotKey")] string SlotKey,
     [property: JsonPropertyName("GltfNodePath")] string? GltfNodePath,
-    [property: JsonPropertyName("SubsystemName")] string SubsystemName);
+    [property: JsonPropertyName("SubsystemName")] string SubsystemName,
+    [property: JsonPropertyName("CandidateCount")] int CandidateCount);
 record PartOptionVm(
     [property: JsonPropertyName("Id")] long Id,
     [property: JsonPropertyName("Name")] string Name,
