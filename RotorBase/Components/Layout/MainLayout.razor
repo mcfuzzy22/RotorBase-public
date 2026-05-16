@@ -89,7 +89,8 @@
         {
             var relative = Nav.ToBaseRelativePath(Nav.Uri);
             return relative.Equals("picker", StringComparison.OrdinalIgnoreCase)
-                || relative.StartsWith("picker?", StringComparison.OrdinalIgnoreCase);
+                || relative.StartsWith("picker?", StringComparison.OrdinalIgnoreCase)
+                || relative.StartsWith("picker/", StringComparison.OrdinalIgnoreCase);
         }
     }
 
