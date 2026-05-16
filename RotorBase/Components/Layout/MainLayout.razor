@@ -1,5 +1,6 @@
 @inherits LayoutComponentBase
 @inject UserSession Session
+@inject NavigationManager Nav
 
 <div class="relative min-h-dvh bg-background text-foreground overflow-x-hidden">
     <div aria-hidden="true" class="pointer-events-none absolute inset-0 bg-radial"></div>
@@ -46,8 +47,11 @@
     <ClientBoot />
 
     <div class="relative z-10">
-        <div class="container flex flex-col gap-8 py-10 md:flex-row">
-            <SidebarApp />
+        <div class="@ShellClass">
+            @if (!IsPickerPage)
+            {
+                <SidebarApp />
+            }
 
             <main class="flex-1 space-y-6">
                 <PlanUsageBanner />
@@ -77,3 +81,19 @@
     <a href="." class="ml-2 font-semibold underline underline-offset-2">Reload</a>
     <span class="dismiss ml-3 cursor-pointer text-lg leading-none">×</span>
 </div>
+
+@code {
+    private bool IsPickerPage
+    {
+        get
+        {
+            var relative = Nav.ToBaseRelativePath(Nav.Uri);
+            return relative.Equals("picker", StringComparison.OrdinalIgnoreCase)
+                || relative.StartsWith("picker?", StringComparison.OrdinalIgnoreCase);
+        }
+    }
+
+    private string ShellClass => IsPickerPage
+        ? "container flex flex-col gap-4 py-5"
+        : "container flex flex-col gap-8 py-10 md:flex-row";
+}

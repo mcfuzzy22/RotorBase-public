@@ -10,16 +10,16 @@
 
 <PageTitle>Rotary Part Picker</PageTitle>
 
-<section class="space-y-5">
-    <div class="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
+<section class="space-y-3 text-[13px]">
+    <div class="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
         <div>
-            <p class="text-sm font-semibold uppercase tracking-wide text-primary">Builder</p>
-            <h1 class="text-2xl font-bold tracking-tight md:text-3xl">Rotary Part Picker</h1>
-            <p class="mt-2 max-w-2xl text-sm text-foreground/70">
+            <p class="text-xs font-semibold uppercase tracking-wide text-primary">Builder</p>
+            <h1 class="text-xl font-bold tracking-tight md:text-2xl">Rotary Part Picker</h1>
+            <p class="mt-1 max-w-2xl text-xs text-foreground/70">
                 Pick each component piece by piece, then use preset builds as starting points instead of one-size-fits-all answers.
             </p>
         </div>
-        <div class="w-full md:w-72">
+        <div class="w-full md:w-64">
             <label class="label">Engine core / family</label>
             <select class="input" value="@SelectedEngineId" @onchange="OnEngineChangedAsync" disabled="@IsLoadingEngines">
                 @foreach (var engine in Engines)
@@ -31,9 +31,9 @@
     </div>
 
     <section class="card overflow-hidden shadow-sm ring-1 ring-border/60">
-        <div class="grid gap-3 border-b border-border/60 bg-surface/80 p-4 md:grid-cols-[1fr_auto] md:items-center">
+        <div class="grid gap-2 border-b border-border/60 bg-surface/80 p-3 md:grid-cols-[1fr_auto] md:items-center">
             <div class="flex min-w-0 items-center gap-2">
-                <span class="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary">
+                <span class="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary">
                     @IconLink()
                 </span>
                 <input class="input min-w-0 font-mono text-xs"
@@ -42,9 +42,9 @@
             </div>
             <div class="flex flex-wrap gap-2 text-xs font-semibold">
                 <span class="badge">@SelectedCount / @ComponentCount selected</span>
-                <span class="badge">@FormatMoney(SelectedTotal)</span>
+                <span class="badge">Estimated cost: @FormatMoney(SelectedTotal)</span>
                 <span class="badge">@NeedsCatalogCount need catalog</span>
-                <button class="btn btn-primary h-8 px-3 text-xs" @onclick="SaveBuildAsync" disabled="@IsSavingBuild">
+                <button class="btn btn-primary h-7 px-3 text-xs" @onclick="SaveBuildAsync" disabled="@IsSavingBuild">
                     @(IsSavingBuild ? "Saving..." : "Save Build")
                 </button>
             </div>
@@ -73,14 +73,14 @@
         }
         else
         {
-            <div class="border-b border-border/60 bg-muted/30 px-4 py-2 text-xs font-medium text-foreground/65">
+            <div class="border-b border-border/60 bg-muted/30 px-3 py-1.5 text-xs font-medium text-foreground/65">
                 Subsystems start collapsed. Click a subsystem row to expand its component list.
             </div>
             <div class="divide-y divide-border/60">
                 @foreach (var group in PickerData.groups)
                 {
                     <details class="group">
-                        <summary class="flex cursor-pointer select-none items-center justify-between gap-3 bg-surface/70 px-4 py-3 text-sm font-semibold text-foreground">
+                        <summary class="flex cursor-pointer select-none items-center justify-between gap-3 bg-surface/70 px-3 py-2 text-xs font-semibold text-foreground">
                             <span class="flex items-center gap-2">
                                 <span class="inline-block transition group-open:rotate-90">@IconChevron()</span>
                                 <span>@group.subsystem_name</span>
@@ -89,14 +89,14 @@
                         </summary>
 
                         <div class="overflow-x-auto">
-                            <table class="w-full min-w-[760px] border-collapse text-sm">
+                            <table class="w-full min-w-[860px] border-collapse text-xs">
                                 <thead class="bg-muted/50 text-left text-xs font-semibold uppercase tracking-wide text-foreground/60">
                                     <tr>
-                                        <th class="w-64 border-b border-border/60 px-4 py-3">Component</th>
-                                        <th class="border-b border-border/60 px-4 py-3">Selection</th>
-                                        <th class="w-32 border-b border-border/60 px-4 py-3">Availability</th>
-                                        <th class="w-32 border-b border-border/60 px-4 py-3">Price</th>
-                                        <th class="w-36 border-b border-border/60 px-4 py-3">Where</th>
+                                        <th class="w-64 border-b border-border/60 px-3 py-2">Component</th>
+                                        <th class="border-b border-border/60 px-3 py-2">Selection</th>
+                                        <th class="w-28 border-b border-border/60 px-3 py-2">Catalog</th>
+                                        <th class="w-32 border-b border-border/60 px-3 py-2">Estimated Cost</th>
+                                        <th class="w-28 border-b border-border/60 px-3 py-2">Source</th>
                                     </tr>
                                 </thead>
                                 <tbody>
@@ -104,17 +104,17 @@
                                     {
                                         var selected = GetSelection(component.slot_id);
                                         <tr class="border-b border-border/60 align-top hover:bg-muted/30">
-                                            <td class="px-4 py-3">
+                                            <td class="px-3 py-2">
                                                 <button class="text-left font-semibold text-primary underline-offset-2 hover:underline"
                                                         @onclick="() => StartChoosingAsync(component)">
                                                     @component.category_name
                                                 </button>
                                                 <div class="mt-1 text-xs text-foreground/55">@component.slot_name</div>
                                             </td>
-                                            <td class="px-4 py-3">
+                                            <td class="px-3 py-2">
                                                 @if (selected is null)
                                                 {
-                                                    <button class="btn btn-primary h-8 px-3 text-xs"
+                                                    <button class="btn btn-primary h-7 px-2.5 text-xs"
                                                             @onclick="() => StartChoosingAsync(component)">
                                                         <span class="mr-1 text-base leading-none">+</span>
                                                         Choose @component.category_name
@@ -127,22 +127,22 @@
                                                             <div class="font-semibold">@selected.name</div>
                                                             <div class="text-xs text-foreground/60">@selected.brand @(!string.IsNullOrWhiteSpace(selected.sku) ? $"#{selected.sku}" : string.Empty)</div>
                                                         </div>
-                                                        <button class="btn btn-ghost h-8 px-2 text-xs" @onclick="() => ClearSelection(component.slot_id)">Clear</button>
+                                                        <button class="btn btn-ghost h-7 px-2 text-xs" @onclick="() => ClearSelection(component.slot_id)">Clear</button>
                                                     </div>
                                                 }
                                             </td>
-                                            <td class="px-4 py-3">
+                                            <td class="px-3 py-2">
                                                 @if (component.candidate_count == 0)
                                                 {
-                                                    <span class="rounded-full bg-warning/10 px-2 py-1 text-xs font-semibold text-warning">needs catalog</span>
+                                                    <span class="rounded-full bg-warning/10 px-2 py-0.5 text-xs font-semibold text-warning">needs catalog</span>
                                                 }
                                                 else
                                                 {
                                                     <span class="text-xs text-foreground/70">@component.candidate_count options</span>
                                                 }
                                             </td>
-                                            <td class="px-4 py-3 font-semibold">@FormatMoney(selected?.best_price)</td>
-                                            <td class="px-4 py-3">
+                                            <td class="px-3 py-2 font-semibold">@FormatMoney(selected?.best_price)</td>
+                                            <td class="px-3 py-2">
                                                 @if (selected is not null)
                                                 {
                                                     <a class="text-primary underline-offset-2 hover:underline" href="@($"/shop/parts/{WebUtility.UrlEncode(selected.sku)}")">Details</a>
