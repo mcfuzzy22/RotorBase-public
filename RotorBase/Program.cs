@@ -5394,6 +5394,128 @@ app.MapGet("/api/engine-families/{engineFamilyId:long}/default-tree", async (lon
     }
 });
 
+// Rotary part picker component list for an engine family
+app.MapGet("/api/picker/engines/{engineFamilyId:long}/components", async (long engineFamilyId, CancellationToken ct) =>
+{
+    if (string.IsNullOrWhiteSpace(connectionString))
+        return Results.Problem(title: "Missing connection string", detail: "ConnectionStrings not set", statusCode: 500);
+
+    try
+    {
+        await using var conn = new MySqlConnection(connectionString);
+        await conn.OpenAsync(ct);
+
+        var engine = await conn.QuerySingleOrDefaultAsync(new CommandDefinition(
+            @"SELECT
+                  CAST(ef.engine_family_id AS SIGNED) AS engine_family_id,
+                  ef.code                             AS engine_code,
+                  CAST(eft.tree_id AS SIGNED)         AS tree_id,
+                  ct.`name`                           AS tree_name
+              FROM EngineFamily ef
+              LEFT JOIN EngineFamilyTree eft
+                ON eft.engine_family_id = ef.engine_family_id
+               AND eft.is_default = 1
+              LEFT JOIN CategoryTree ct ON ct.tree_id = eft.tree_id
+              WHERE ef.engine_family_id = @engineFamilyId
+              LIMIT 1;",
+            new { engineFamilyId },
+            cancellationToken: ct));
+
+        if (engine is null)
+            return Results.NotFound(new { error = "engine_family_not_found" });
+
+        var rows = (await conn.QueryAsync(new CommandDefinition(
+            @"SELECT DISTINCT
+                  CAST(s.slot_id AS SIGNED)              AS slot_id,
+                  s.`key`                                AS slot_key,
+                  COALESCE(NULLIF(s.`name`, ''), s.`key`) AS slot_name,
+                  s.gltf_node_path                       AS gltf_node_path,
+                  CAST(ss.subsystem_id AS SIGNED)        AS subsystem_id,
+                  COALESCE(NULLIF(ss.`key`, ''), 'ungrouped') AS subsystem_key,
+                  COALESCE(NULLIF(ss.`name`, ''), 'Ungrouped') AS subsystem_name,
+                  COALESCE(ss.sort_order, 999)           AS subsystem_order,
+                  CAST(c.category_id AS SIGNED)          AS category_id,
+                  COALESCE(c.slug, CONCAT('cat:', c.category_id)) AS category_slug,
+                  c.`name`                               AS category_name,
+                  (
+                    SELECT COUNT(DISTINCT p.part_id)
+                      FROM PartCategory pc
+                      JOIN Part p ON p.part_id = pc.part_id
+                     WHERE pc.category_id = c.category_id
+                       AND (
+                            NOT EXISTS (
+                                SELECT 1
+                                  FROM PartFitment pf
+                                 WHERE pf.part_id = p.part_id
+                            )
+                         OR EXISTS (
+                                SELECT 1
+                                  FROM PartFitment pf
+                                 WHERE pf.part_id = p.part_id
+                                   AND pf.engine_family_id = @engineFamilyId
+                            )
+                       )
+                  )                                      AS candidate_count
+              FROM Slot s
+              LEFT JOIN Subsystem ss ON ss.subsystem_id = s.subsystem_id
+              JOIN PartSlot ps
+                ON ps.slot_id = s.slot_id
+               AND ps.category_id IS NOT NULL
+               AND ps.allow = 1
+              JOIN Category c ON c.category_id = ps.category_id
+              WHERE s.engine_family_id = @engineFamilyId
+              ORDER BY subsystem_order, subsystem_name, slot_name, slot_key, category_name;",
+            new { engineFamilyId },
+            cancellationToken: ct))).ToList();
+
+        var groups = rows
+            .GroupBy(row => new
+            {
+                subsystem_id = row.subsystem_id is null ? (long?)null : Convert.ToInt64(row.subsystem_id),
+                subsystem_key = Convert.ToString(row.subsystem_key) ?? "ungrouped",
+                subsystem_name = Convert.ToString(row.subsystem_name) ?? "Ungrouped",
+                subsystem_order = row.subsystem_order is null ? 999 : Convert.ToInt32(row.subsystem_order)
+            })
+            .OrderBy(group => group.Key.subsystem_order)
+            .ThenBy(group => group.Key.subsystem_name)
+            .Select(group => new
+            {
+                group.Key.subsystem_id,
+                group.Key.subsystem_key,
+                group.Key.subsystem_name,
+                group.Key.subsystem_order,
+                components = group.Select(row => new
+                {
+                    slot_id = Convert.ToInt64(row.slot_id),
+                    slot_key = Convert.ToString(row.slot_key) ?? string.Empty,
+                    slot_name = Convert.ToString(row.slot_name) ?? string.Empty,
+                    gltf_node_path = row.gltf_node_path is null ? null : Convert.ToString(row.gltf_node_path),
+                    category_id = Convert.ToInt64(row.category_id),
+                    category_slug = Convert.ToString(row.category_slug) ?? string.Empty,
+                    category_name = Convert.ToString(row.category_name) ?? string.Empty,
+                    candidate_count = row.candidate_count is null ? 0 : Convert.ToInt64(row.candidate_count)
+                }).ToList()
+            })
+            .ToList();
+
+        return Results.Json(new
+        {
+            engine_family_id = Convert.ToInt64(engine.engine_family_id),
+            engine_code = Convert.ToString(engine.engine_code) ?? string.Empty,
+            tree_id = engine.tree_id is null ? (long?)null : Convert.ToInt64(engine.tree_id),
+            tree_name = engine.tree_name is null ? null : Convert.ToString(engine.tree_name),
+            group_count = groups.Count,
+            component_count = groups.Sum(group => group.components.Count),
+            needs_catalog_count = groups.Sum(group => group.components.LongCount(component => component.candidate_count == 0)),
+            groups
+        });
+    }
+    catch (Exception ex)
+    {
+        return Results.Problem(title: "Picker components failed", detail: ex.Message, statusCode: 500);
+    }
+});
+
 // Guides listing (public)
 app.MapGet("/api/guides", async (CancellationToken ct) =>
 {

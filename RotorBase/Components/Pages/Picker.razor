@@ -1,0 +1,430 @@
+@page "/picker"
+@rendermode InteractiveServer
+@using System.Globalization
+@using System.Net
+@using System.Text.Json
+@using System.Text.Json.Serialization
+@inject HttpClient Http
+
+<PageTitle>Rotary Part Picker</PageTitle>
+
+<section class="space-y-5">
+    <div class="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
+        <div>
+            <p class="text-sm font-semibold uppercase tracking-wide text-primary">Builder</p>
+            <h1 class="text-2xl font-bold tracking-tight md:text-3xl">Rotary Part Picker</h1>
+            <p class="mt-2 max-w-2xl text-sm text-foreground/70">
+                Pick each component piece by piece, then use preset builds as starting points instead of one-size-fits-all answers.
+            </p>
+        </div>
+        <div class="w-full md:w-72">
+            <label class="label">Core / engine family</label>
+            <select class="input" value="@SelectedEngineId" @onchange="OnEngineChangedAsync" disabled="@IsLoadingEngines">
+                @foreach (var engine in Engines)
+                {
+                    <option value="@engine.engine_family_id">@engine.code</option>
+                }
+            </select>
+        </div>
+    </div>
+
+    <section class="card overflow-hidden shadow-sm ring-1 ring-border/60">
+        <div class="grid gap-3 border-b border-border/60 bg-surface/80 p-4 md:grid-cols-[1fr_auto] md:items-center">
+            <div class="flex min-w-0 items-center gap-2">
+                <span class="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary">
+                    @IconLink()
+                </span>
+                <input class="input min-w-0 font-mono text-xs"
+                       readonly
+                       value="@PickerUrl" />
+            </div>
+            <div class="flex flex-wrap gap-2 text-xs font-semibold">
+                <span class="badge">@SelectedCount / @ComponentCount selected</span>
+                <span class="badge">@FormatMoney(SelectedTotal)</span>
+                <span class="badge">@NeedsCatalogCount need catalog</span>
+            </div>
+        </div>
+
+        <div class="@CompatibilityClass">
+            <div class="flex items-center gap-2">
+                @IconCheck()
+                <span class="font-semibold">Compatibility:</span>
+                <span>@CompatibilityText</span>
+            </div>
+            <div class="hidden font-semibold md:block">@SelectedEngineCode</div>
+        </div>
+
+        @if (IsLoadingEngines || IsLoadingPicker)
+        {
+            <div class="p-5 text-sm text-foreground/70">Loading picker...</div>
+        }
+        else if (!string.IsNullOrWhiteSpace(ErrorMessage))
+        {
+            <div class="m-4 rounded-md bg-danger/10 px-3 py-2 text-sm text-danger ring-1 ring-danger/25">@ErrorMessage</div>
+        }
+        else if (PickerData is null || PickerData.groups.Count == 0)
+        {
+            <div class="p-5 text-sm text-foreground/70">No mapped components for this engine yet.</div>
+        }
+        else
+        {
+            <div class="divide-y divide-border/60">
+                @foreach (var group in PickerData.groups)
+                {
+                    <details open class="group">
+                        <summary class="flex cursor-pointer select-none items-center justify-between gap-3 bg-surface/70 px-4 py-3 text-sm font-semibold text-foreground">
+                            <span>@group.subsystem_name</span>
+                            <span class="text-xs font-medium text-foreground/60">@group.components.Count components</span>
+                        </summary>
+
+                        <div class="overflow-x-auto">
+                            <table class="w-full min-w-[760px] border-collapse text-sm">
+                                <thead class="bg-muted/50 text-left text-xs font-semibold uppercase tracking-wide text-foreground/60">
+                                    <tr>
+                                        <th class="w-64 border-b border-border/60 px-4 py-3">Component</th>
+                                        <th class="border-b border-border/60 px-4 py-3">Selection</th>
+                                        <th class="w-32 border-b border-border/60 px-4 py-3">Availability</th>
+                                        <th class="w-32 border-b border-border/60 px-4 py-3">Price</th>
+                                        <th class="w-36 border-b border-border/60 px-4 py-3">Where</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @foreach (var component in group.components)
+                                    {
+                                        var selected = GetSelection(component.slot_id);
+                                        <tr class="border-b border-border/60 align-top hover:bg-muted/30">
+                                            <td class="px-4 py-3">
+                                                <button class="text-left font-semibold text-primary underline-offset-2 hover:underline"
+                                                        @onclick="() => StartChoosingAsync(component)">
+                                                    @component.category_name
+                                                </button>
+                                                <div class="mt-1 text-xs text-foreground/55">@component.slot_name</div>
+                                            </td>
+                                            <td class="px-4 py-3">
+                                                @if (selected is null)
+                                                {
+                                                    <button class="btn btn-primary h-8 px-3 text-xs"
+                                                            @onclick="() => StartChoosingAsync(component)">
+                                                        <span class="mr-1 text-base leading-none">+</span>
+                                                        Choose @component.category_name
+                                                    </button>
+                                                }
+                                                else
+                                                {
+                                                    <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                                                        <div>
+                                                            <div class="font-semibold">@selected.name</div>
+                                                            <div class="text-xs text-foreground/60">@selected.brand @(!string.IsNullOrWhiteSpace(selected.sku) ? $"#{selected.sku}" : string.Empty)</div>
+                                                        </div>
+                                                        <button class="btn btn-ghost h-8 px-2 text-xs" @onclick="() => ClearSelection(component.slot_id)">Clear</button>
+                                                    </div>
+                                                }
+                                            </td>
+                                            <td class="px-4 py-3">
+                                                @if (component.candidate_count == 0)
+                                                {
+                                                    <span class="rounded-full bg-warning/10 px-2 py-1 text-xs font-semibold text-warning">needs catalog</span>
+                                                }
+                                                else
+                                                {
+                                                    <span class="text-xs text-foreground/70">@component.candidate_count options</span>
+                                                }
+                                            </td>
+                                            <td class="px-4 py-3 font-semibold">@FormatMoney(selected?.best_price)</td>
+                                            <td class="px-4 py-3">
+                                                @if (selected is not null)
+                                                {
+                                                    <a class="text-primary underline-offset-2 hover:underline" href="@($"/shop/parts/{WebUtility.UrlEncode(selected.sku)}")">Details</a>
+                                                }
+                                                else
+                                                {
+                                                    <a class="text-primary underline-offset-2 hover:underline" href="@ShopHref(component)">Shop</a>
+                                                }
+                                            </td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+                    </details>
+                }
+            </div>
+        }
+    </section>
+</section>
+
+@if (ActiveComponent is not null)
+{
+    <div class="fixed inset-0 z-40 bg-background/60 backdrop-blur-sm"></div>
+    <div class="fixed inset-0 z-50 grid place-items-center p-4">
+        <section class="card flex max-h-[88vh] w-full max-w-3xl flex-col overflow-hidden shadow-xl">
+            <div class="flex items-start justify-between gap-3 border-b border-border/60 px-4 py-3">
+                <div>
+                    <h2 class="text-lg font-semibold">Choose @ActiveComponent.category_name</h2>
+                    <p class="text-sm text-foreground/60">@SelectedEngineCode · @ActiveComponent.slot_name</p>
+                </div>
+                <button class="btn btn-ghost h-8 px-2" @onclick="CloseChooser" aria-label="Close">x</button>
+            </div>
+
+            <div class="border-b border-border/60 p-4">
+                <div class="grid gap-3 md:grid-cols-[1fr_auto]">
+                    <input class="input" placeholder="Filter this component..." @bind="PartSearch" @bind:event="oninput" />
+                    <button class="btn btn-primary" @onclick="LoadPartsAsync" disabled="@IsLoadingParts">Search</button>
+                </div>
+            </div>
+
+            <div class="overflow-y-auto p-4">
+                @if (IsLoadingParts)
+                {
+                    <div class="text-sm text-foreground/70">Searching parts...</div>
+                }
+                else if (!string.IsNullOrWhiteSpace(PartsError))
+                {
+                    <div class="rounded-md bg-danger/10 px-3 py-2 text-sm text-danger ring-1 ring-danger/25">@PartsError</div>
+                }
+                else if (PartRows.Count == 0)
+                {
+                    <div class="rounded-md bg-warning/10 px-3 py-2 text-sm text-warning ring-1 ring-warning/25">
+                        No verified catalog parts for this component yet.
+                    </div>
+                }
+                else
+                {
+                    <div class="space-y-2">
+                        @foreach (var part in PartRows)
+                        {
+                            <article class="grid gap-3 rounded-md border border-border/60 p-3 md:grid-cols-[1fr_auto] md:items-center">
+                                <div>
+                                    <div class="font-semibold">@part.name</div>
+                                    <div class="mt-1 text-xs text-foreground/60">
+                                        @part.brand
+                                        @if (!string.IsNullOrWhiteSpace(part.sku))
+                                        {
+                                            <span> · @part.sku</span>
+                                        }
+                                    </div>
+                                </div>
+                                <div class="flex items-center justify-between gap-3 md:justify-end">
+                                    <span class="font-semibold">@FormatMoney(part.best_price)</span>
+                                    <button class="btn btn-primary h-8 px-3 text-xs" @onclick="() => PickPart(part)">Add</button>
+                                </div>
+                            </article>
+                        }
+                    </div>
+                }
+            </div>
+        </section>
+    </div>
+}
+
+@code {
+    private readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
+    private readonly Dictionary<long, PartRow> Selections = new();
+
+    private List<EngineOption> Engines { get; set; } = new();
+    private PickerResponse? PickerData { get; set; }
+    private PickerComponent? ActiveComponent { get; set; }
+    private List<PartRow> PartRows { get; set; } = new();
+    private long SelectedEngineId { get; set; }
+    private string SelectedEngineCode => Engines.FirstOrDefault(e => e.engine_family_id == SelectedEngineId)?.code ?? PickerData?.engine_code ?? "Engine";
+    private string PartSearch { get; set; } = string.Empty;
+    private string? ErrorMessage { get; set; }
+    private string? PartsError { get; set; }
+    private bool IsLoadingEngines { get; set; }
+    private bool IsLoadingPicker { get; set; }
+    private bool IsLoadingParts { get; set; }
+
+    private int ComponentCount => PickerData?.component_count ?? 0;
+    private int NeedsCatalogCount => PickerData?.needs_catalog_count ?? 0;
+    private int SelectedCount => Selections.Count;
+    private decimal? SelectedTotal => Selections.Values.Any(v => v.best_price.HasValue)
+        ? Selections.Values.Where(v => v.best_price.HasValue).Sum(v => v.best_price!.Value)
+        : null;
+    private string PickerUrl => $"https://boostedrotary.com/picker?engine={Uri.EscapeDataString(SelectedEngineCode)}";
+    private string CompatibilityText => NeedsCatalogCount == 0
+        ? "No missing catalog coverage for this engine map."
+        : $"{NeedsCatalogCount} components still need verified catalog parts.";
+    private string CompatibilityClass => NeedsCatalogCount == 0
+        ? "flex items-center justify-between gap-3 bg-success px-4 py-2 text-sm text-white"
+        : "flex items-center justify-between gap-3 bg-warning px-4 py-2 text-sm text-white";
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadEnginesAsync();
+    }
+
+    private async Task LoadEnginesAsync()
+    {
+        IsLoadingEngines = true;
+        ErrorMessage = null;
+
+        try
+        {
+            Engines = await Http.GetFromJsonAsync<List<EngineOption>>("/api/engine-families", JsonOptions) ?? new();
+            var preferred = Engines.FirstOrDefault(e => e.code.Equals("13B-REW", StringComparison.OrdinalIgnoreCase))
+                ?? Engines.FirstOrDefault(e => e.code.Contains("13B-REW", StringComparison.OrdinalIgnoreCase))
+                ?? Engines.FirstOrDefault(e => e.slot_count > 0)
+                ?? Engines.FirstOrDefault();
+
+            if (preferred is null)
+            {
+                ErrorMessage = "No engine families are available yet.";
+                return;
+            }
+
+            SelectedEngineId = preferred.engine_family_id;
+            await LoadPickerAsync();
+        }
+        catch (Exception ex)
+        {
+            ErrorMessage = $"Unable to load engines: {ex.Message}";
+        }
+        finally
+        {
+            IsLoadingEngines = false;
+        }
+    }
+
+    private async Task OnEngineChangedAsync(ChangeEventArgs args)
+    {
+        if (!long.TryParse(Convert.ToString(args.Value, CultureInfo.InvariantCulture), out var engineId) || engineId == SelectedEngineId)
+            return;
+
+        SelectedEngineId = engineId;
+        Selections.Clear();
+        ActiveComponent = null;
+        await LoadPickerAsync();
+    }
+
+    private async Task LoadPickerAsync()
+    {
+        if (SelectedEngineId <= 0)
+            return;
+
+        IsLoadingPicker = true;
+        ErrorMessage = null;
+
+        try
+        {
+            PickerData = await Http.GetFromJsonAsync<PickerResponse>($"/api/picker/engines/{SelectedEngineId}/components", JsonOptions);
+        }
+        catch (Exception ex)
+        {
+            ErrorMessage = $"Unable to load picker components: {ex.Message}";
+        }
+        finally
+        {
+            IsLoadingPicker = false;
+        }
+    }
+
+    private async Task StartChoosingAsync(PickerComponent component)
+    {
+        ActiveComponent = component;
+        PartSearch = string.Empty;
+        await LoadPartsAsync();
+    }
+
+    private async Task LoadPartsAsync()
+    {
+        if (ActiveComponent is null)
+            return;
+
+        IsLoadingParts = true;
+        PartsError = null;
+
+        try
+        {
+            var q = string.IsNullOrWhiteSpace(PartSearch) ? string.Empty : $"&q={Uri.EscapeDataString(PartSearch.Trim())}";
+            var url = $"/api/shop?engine={Uri.EscapeDataString(SelectedEngineCode)}&category={Uri.EscapeDataString(ActiveComponent.category_slug)}{q}&sort=price&dir=asc&page=1&pageSize=12";
+            var response = await Http.GetFromJsonAsync<ShopResponse>(url, JsonOptions);
+            PartRows = response?.Items ?? new();
+        }
+        catch (Exception ex)
+        {
+            PartsError = $"Unable to load parts: {ex.Message}";
+            PartRows = new();
+        }
+        finally
+        {
+            IsLoadingParts = false;
+        }
+    }
+
+    private void PickPart(PartRow part)
+    {
+        if (ActiveComponent is not null)
+            Selections[ActiveComponent.slot_id] = part;
+
+        CloseChooser();
+    }
+
+    private PartRow? GetSelection(long slotId) => Selections.TryGetValue(slotId, out var part) ? part : null;
+    private void ClearSelection(long slotId) => Selections.Remove(slotId);
+    private void CloseChooser()
+    {
+        ActiveComponent = null;
+        PartRows.Clear();
+        PartsError = null;
+    }
+
+    private string ShopHref(PickerComponent component)
+        => $"/shop?engine={Uri.EscapeDataString(SelectedEngineCode)}&category={Uri.EscapeDataString(component.category_slug)}";
+
+    private static string FormatMoney(decimal? value)
+        => value.HasValue ? value.Value.ToString("C0", CultureInfo.GetCultureInfo("en-US")) : "--";
+
+    private RenderFragment IconLink() => @<svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.1 0l2-2a5 5 0 0 0-7.1-7.1l-1.1 1.1"/><path d="M14 11a5 5 0 0 0-7.1 0l-2 2A5 5 0 0 0 12 20.1l1.1-1.1"/></svg>;
+    private RenderFragment IconCheck() => @<svg class="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>;
+
+    private sealed class EngineOption
+    {
+        public long engine_family_id { get; set; }
+        public string code { get; set; } = string.Empty;
+        public int slot_count { get; set; }
+    }
+
+    private sealed class PickerResponse
+    {
+        public long engine_family_id { get; set; }
+        public string engine_code { get; set; } = string.Empty;
+        public int component_count { get; set; }
+        public int needs_catalog_count { get; set; }
+        public List<PickerGroup> groups { get; set; } = new();
+    }
+
+    private sealed class PickerGroup
+    {
+        public long? subsystem_id { get; set; }
+        public string subsystem_key { get; set; } = string.Empty;
+        public string subsystem_name { get; set; } = string.Empty;
+        public int subsystem_order { get; set; }
+        public List<PickerComponent> components { get; set; } = new();
+    }
+
+    private sealed class PickerComponent
+    {
+        public long slot_id { get; set; }
+        public string slot_key { get; set; } = string.Empty;
+        public string slot_name { get; set; } = string.Empty;
+        public long category_id { get; set; }
+        public string category_slug { get; set; } = string.Empty;
+        public string category_name { get; set; } = string.Empty;
+        public long candidate_count { get; set; }
+    }
+
+    private sealed class PartRow
+    {
+        public long part_id { get; set; }
+        public string sku { get; set; } = string.Empty;
+        public string name { get; set; } = string.Empty;
+        public string brand { get; set; } = string.Empty;
+        public decimal? best_price { get; set; }
+    }
+
+    private sealed class ShopResponse
+    {
+        [JsonPropertyName("items")]
+        public List<PartRow>? Items { get; set; }
+    }
+}
