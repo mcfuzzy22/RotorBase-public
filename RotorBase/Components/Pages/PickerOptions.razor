@@ -157,7 +157,7 @@
                                     <td class="px-2 py-2 font-semibold">@FormatMoney(part.best_price)</td>
                                     <td class="px-2 py-2 font-semibold">@FormatMoney(part.best_price.HasValue ? part.best_price.Value * Quantity : null)</td>
                                     <td class="sticky right-0 bg-background px-2 py-2 text-right">
-                                        <button class="inline-flex min-h-7 min-w-[44px] items-center justify-center rounded bg-[#2f86c8] px-2.5 text-[11px] font-bold text-white shadow-sm ring-1 ring-[#1b6fa8]/30 hover:bg-[#2477b6]"
+                                        <button class="btn btn-primary min-h-7 min-w-[44px] px-2.5 text-[11px] font-bold"
                                                 @onclick="() => AddPart(part)">
                                             Add
                                         </button>

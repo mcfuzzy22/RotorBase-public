@@ -6,6 +6,7 @@ public sealed class PickerSelectionState
     public string EngineCode { get; private set; } = string.Empty;
     public Dictionary<long, PickerPartSelection> Selections { get; } = new();
     public Dictionary<long, int> Quantities { get; } = new();
+    public HashSet<string> ExpandedGroups { get; } = new(StringComparer.OrdinalIgnoreCase);
 
     public void SetEngine(long engineFamilyId, string engineCode, bool clearSelections)
     {
@@ -13,6 +14,7 @@ public sealed class PickerSelectionState
         {
             Selections.Clear();
             Quantities.Clear();
+            ExpandedGroups.Clear();
         }
 
         EngineFamilyId = engineFamilyId;
