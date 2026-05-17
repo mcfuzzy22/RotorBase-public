@@ -39,6 +39,7 @@ public sealed class PickerPartSelection
     public string sku { get; set; } = string.Empty;
     public string name { get; set; } = string.Empty;
     public string brand { get; set; } = string.Empty;
+    public string? image_url { get; set; }
     public decimal? best_price { get; set; }
     public bool is_kit { get; set; }
     public string? category_name { get; set; }
