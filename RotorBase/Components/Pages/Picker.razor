@@ -292,7 +292,9 @@
         try
         {
             Engines = await Http.GetFromJsonAsync<List<EngineOption>>("/api/engine-families", JsonOptions) ?? new();
-            var preferred = Engines.FirstOrDefault(e => e.code.Equals("13B-REW", StringComparison.OrdinalIgnoreCase))
+            var preferred = Engines.FirstOrDefault(e => e.code.Equals("13B-REW S6", StringComparison.OrdinalIgnoreCase))
+                ?? Engines.FirstOrDefault(e => e.code.Equals("13B-REW-S6", StringComparison.OrdinalIgnoreCase))
+                ?? Engines.FirstOrDefault(e => e.code.Equals("13B-REW", StringComparison.OrdinalIgnoreCase))
                 ?? Engines.FirstOrDefault(e => e.code.Contains("13B-REW", StringComparison.OrdinalIgnoreCase))
                 ?? Engines.FirstOrDefault(e => e.slot_count > 0)
                 ?? Engines.FirstOrDefault();
