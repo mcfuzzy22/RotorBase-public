@@ -3,58 +3,43 @@
 
 <PageTitle>Home • BoostedRotary.com</PageTitle>
 
-<div class="relative min-h-[calc(100vh-4rem)] bg-background text-foreground">
-    <div aria-hidden="true" class="pointer-events-none absolute inset-0 bg-radial"></div>
-    <div aria-hidden="true" class="pointer-events-none absolute inset-x-0 top-0 h-40 bg-grid opacity-[.12]"></div>
+<div class="min-h-[calc(100vh-4rem)] bg-background text-foreground">
+    <section class="container py-8 md:py-12">
+        <div class="grid gap-6 lg:grid-cols-[minmax(0,1fr)_360px] lg:items-start">
+            <div class="rounded-md bg-surface p-6 shadow-sm ring-1 ring-border/60 md:p-8">
+                <span class="badge">Picker-first rotary builds</span>
 
-    <section class="container relative z-10 pt-10 md:pt-14">
-        <div class="max-w-3xl">
-            <span class="badge">
-                🚀 New · Rotary build tools are live
-            </span>
+                <h1 class="mt-4 max-w-3xl text-balance text-3xl font-bold text-foreground md:text-5xl">
+                    Build a 13B Turbo II S5 parts list one component at a time.
+                </h1>
 
-            <h1 class="mt-4 text-balance text-4xl font-extrabold tracking-tight md:text-6xl">
-                Build rotary engines
-                <span class="bg-gradient-to-r from-primary via-accent to-secondary bg-clip-text text-transparent animate-gradient bg-[length:200%_auto]">
-                    faster & smarter
-                </span>
-            </h1>
-
-            <p class="mt-4 text-lg text-foreground/80">
-                Jump into the Builder, browse parts, or explore community builds—clean UI, dark mode, and
-                glassy surfaces baked in.
-            </p>
-
-            <div class="mt-6 flex flex-wrap items-center gap-3">
-                <NavLink href="/builder" class="btn btn-primary">Open Builder</NavLink>
-                <NavLink href="/shop" class="btn btn-soft">Go to Shop</NavLink>
-            </div>
-        </div>
-    </section>
-
-    <section class="container relative z-10 py-10">
-        <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            <div class="card p-5">
-                <div class="text-lg font-semibold">Fast Tailwind Base</div>
-                <p class="mt-1 text-sm text-foreground/75">
-                    Semantic tokens, dark mode, and clean components.
+                <p class="mt-4 max-w-2xl text-pretty text-base leading-7 text-foreground/70">
+                    Start with the rotary part picker, choose each component from a filtered catalog, add notes beside the build, and save the result to your builds page when you are ready.
                 </p>
+
+                <div class="mt-6 flex flex-wrap items-center gap-3">
+                    <NavLink href="/picker" class="btn btn-primary">Open Picker</NavLink>
+                    <NavLink href="/builds" class="btn btn-soft">View Builds</NavLink>
+                </div>
             </div>
 
-            <div class="card p-5">
-                <div class="text-lg font-semibold">Ready for Builder</div>
-                <p class="mt-1 text-sm text-foreground/75">
-                    Three-pane layout + completion chip patterns.
-                </p>
-            </div>
-
-            <div class="card p-5">
-                <div class="text-lg font-semibold">Shop &amp; Community</div>
-                <p class="mt-1 text-sm text-foreground/75">
-                    Part grids with images, price alerts, and shared builds.
-                </p>
-            </div>
+            <aside class="rounded-md bg-surface p-4 shadow-sm ring-1 ring-border/60">
+                <div class="text-sm font-semibold text-foreground">Current focus</div>
+                <div class="mt-3 space-y-3 text-sm text-foreground/70">
+                    <div class="rounded-md bg-muted/50 p-3">
+                        <div class="font-semibold text-foreground">13B Turbo II S5</div>
+                        <p class="mt-1 text-pretty">The picker defaults here while other engine cores stay marked as coming soon.</p>
+                    </div>
+                    <div class="rounded-md bg-muted/50 p-3">
+                        <div class="font-semibold text-foreground">Build notes</div>
+                        <p class="mt-1 text-pretty">Keep measurements, questions, and install reminders next to the live picker.</p>
+                    </div>
+                    <div class="rounded-md bg-muted/50 p-3">
+                        <div class="font-semibold text-foreground">Saved builds</div>
+                        <p class="mt-1 text-pretty">Save a titled picker list to your account and manage it from Builds.</p>
+                    </div>
+                </div>
+            </aside>
         </div>
     </section>
 </div>
-

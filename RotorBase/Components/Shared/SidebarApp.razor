@@ -31,11 +31,11 @@
     <nav class="card p-2 shadow-sm ring-1 ring-border/60" aria-label="Primary">
       <ul class="space-y-1">
         <li><NavLink href="/" Match="NavLinkMatch.All" class="rb-nav group" ActiveClass="active">@IconHome() <span>Home</span></NavLink></li>
-        <li><NavLink href="/shop" Match="NavLinkMatch.Prefix" class="rb-nav group" ActiveClass="active">@IconBag() <span>Shop</span></NavLink></li>
-        <li><NavLink href="/bundles" Match="NavLinkMatch.Prefix" class="rb-nav group" ActiveClass="active">@IconCollection() <span>Bundles</span></NavLink></li>
-        <li><NavLink href="/builder" Match="NavLinkMatch.Prefix" class="rb-nav group" ActiveClass="active">@IconWrench() <span>Builder</span></NavLink></li>
         <li><NavLink href="/picker" Match="NavLinkMatch.Prefix" class="rb-nav group" ActiveClass="active">@IconChecklist() <span>Picker</span></NavLink></li>
+        <li><NavLink href="/shop" Match="NavLinkMatch.Prefix" class="rb-nav group" ActiveClass="active">@IconBag() <span>Shop</span></NavLink></li>
         <li><NavLink href="/builds" Match="NavLinkMatch.Prefix" class="rb-nav group" ActiveClass="active">@IconChart() <span>Builds</span></NavLink></li>
+        <li><NavLink href="/builder" Match="NavLinkMatch.Prefix" class="rb-nav group" ActiveClass="active">@IconWrench() <span>Builder</span></NavLink></li>
+        <li><NavLink href="/bundles" Match="NavLinkMatch.Prefix" class="rb-nav group" ActiveClass="active">@IconCollection() <span>Bundles</span></NavLink></li>
         <li><NavLink href="/builds/gallery" Match="NavLinkMatch.Prefix" class="rb-nav group" ActiveClass="active">@IconUsers() <span>Community</span></NavLink></li>
 
         @if (Session.IsSignedIn)
@@ -53,7 +53,7 @@
     @if (!HideAdmin && Session.IsAdmin)
     {
       <nav class="card p-2 shadow-sm ring-1 ring-border/60" aria-label="Admin">
-        <div class="px-3 pb-2 text-xs font-semibold uppercase tracking-wide text-foreground/60">Admin</div>
+        <div class="px-3 pb-2 text-xs font-semibold uppercase text-foreground/60">Admin</div>
         <ul class="space-y-1">
           <li><NavLink href="/admin/users"           class="rb-nav group" ActiveClass="active">@IconShield()     <span>Admin</span></NavLink></li>
           <li><NavLink href="/admin/plans"           class="rb-nav group" ActiveClass="active">@IconCog()        <span>Plan Limits</span></NavLink></li>
@@ -72,7 +72,7 @@
 
     <!-- Account -->
     <section class="card p-4 shadow-sm ring-1 ring-border/60">
-      <div class="mb-2 flex items-center justify-between text-xs font-semibold uppercase tracking-wide text-foreground/60">
+      <div class="mb-2 flex items-center justify-between text-xs font-semibold uppercase text-foreground/60">
         <span>Account</span>
         @if (!_openAuth && !Session.IsSignedIn)
         {

@@ -4,6 +4,7 @@
 @using System.Net
 @using System.Text.Json
 @using System.Text.Json.Serialization
+@using Microsoft.AspNetCore.WebUtilities
 @inject HttpClient Http
 @inject UserSession Session
 @inject NavigationManager Nav
@@ -11,15 +12,28 @@
 
 <PageTitle>Rotary Part Picker</PageTitle>
 
-<section class="space-y-4 text-[12px]">
-    <div class="-mx-4 border-y border-[#45496d] bg-[#50547b] px-4 py-5 text-center text-white shadow-sm md:-mx-8">
-        <h1 class="text-2xl font-bold tracking-tight text-white drop-shadow-sm">Choose Your Parts</h1>
-    </div>
+<section class="space-y-3 text-[12px]">
+    <header class="rounded-md bg-surface p-4 shadow-sm ring-1 ring-border/60">
+        <div class="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+            <div>
+                <p class="text-xs font-semibold uppercase text-foreground/55">Rotary part picker</p>
+                <h1 class="mt-1 text-2xl font-bold text-foreground text-balance">Choose parts for @SelectedEngineCode</h1>
+                <p class="mt-1 max-w-2xl text-sm text-foreground/65 text-pretty">
+                    Build a saved parts list component by component. Other engine cores are coming soon.
+                </p>
+            </div>
+            <div class="flex flex-wrap gap-2">
+                <span class="badge tabular-nums">@SelectedCount / @ComponentCount selected</span>
+                <span class="badge tabular-nums">Estimated cost: @FormatMoney(SelectedTotal)</span>
+                <span class="badge tabular-nums">@NeedsCatalogCount need catalog</span>
+            </div>
+        </div>
+    </header>
 
-    <section class="mx-auto w-full max-w-[1100px] overflow-hidden rounded-md bg-surface shadow-sm ring-1 ring-border/60">
-        <div class="grid gap-2 border-b border-border/60 bg-surface p-2.5 md:grid-cols-[1fr_auto] md:items-center">
+    <section class="w-full overflow-hidden rounded-md bg-surface shadow-sm ring-1 ring-border/60">
+        <div class="grid gap-3 border-b border-border/60 bg-surface p-3 xl:grid-cols-[minmax(0,1fr)_auto] xl:items-end">
             <div class="flex min-w-0 items-center gap-2">
-                <span class="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded border border-border/70 bg-muted text-primary">
+                <span class="inline-flex size-8 shrink-0 items-center justify-center rounded-md border border-border/70 bg-muted text-primary">
                     @IconLink()
                 </span>
                 <input class="input min-w-0 font-mono text-xs"
@@ -36,9 +50,6 @@
                         }
                     </select>
                 </div>
-                <span class="badge">@SelectedCount / @ComponentCount selected</span>
-                <span class="badge">Estimated cost: @FormatMoney(SelectedTotal)</span>
-                <span class="badge">@NeedsCatalogCount need catalog</span>
                 <button class="btn btn-primary h-8 px-3 text-xs" @onclick="OpenSaveDialog" disabled="@IsSavingBuild">
                     Save Build
                 </button>
@@ -61,6 +72,13 @@
             </div>
         }
 
+        @if (!string.IsNullOrWhiteSpace(PickerInfoMessage))
+        {
+            <div class="border-b border-border/60 bg-info/10 px-4 py-2 text-sm font-medium text-info">
+                @PickerInfoMessage
+            </div>
+        }
+
         @if (IsLoadingEngines || IsLoadingPicker)
         {
             <div class="p-5 text-sm text-foreground/70">Loading picker...</div>
@@ -75,8 +93,8 @@
         }
         else
         {
-            <div class="border-b border-border/60 bg-muted/30 px-3 py-1.5 text-xs font-medium text-foreground/65">
-                Subsystems start collapsed. Click a subsystem row to expand its component list.
+            <div class="border-b border-border/60 bg-muted/40 px-3 py-2 text-xs font-medium text-foreground/65">
+                Subsystems start collapsed. Open a subsystem, choose a component, then return here with your place preserved.
             </div>
             <div class="divide-y divide-border/60">
                 @foreach (var group in PickerData.groups)
@@ -84,21 +102,21 @@
                     var isExpanded = IsGroupExpanded(group);
                     <section class="group">
                         <button type="button"
-                                class="flex w-full cursor-pointer select-none items-center justify-between gap-3 bg-surface/70 px-3 py-2 text-left text-xs font-semibold text-foreground hover:bg-muted/40"
+                                class="flex w-full cursor-pointer select-none items-center justify-between gap-3 bg-surface px-3 py-2 text-left text-xs font-semibold text-foreground transition-colors hover:bg-muted/50"
                                 aria-expanded="@isExpanded"
                                 @onclick="() => ToggleGroup(group)">
                             <span class="flex items-center gap-2">
                                 <span class="@ChevronClass(isExpanded)">@IconChevron()</span>
                                 <span>@group.subsystem_name</span>
                             </span>
-                            <span class="text-xs font-medium text-foreground/60">@(isExpanded ? "Click to collapse" : "Click to expand") · @group.components.Count components</span>
+                            <span class="text-xs font-medium text-foreground/60">@(isExpanded ? "Expanded" : "Collapsed") · @group.components.Count components</span>
                         </button>
 
                         @if (isExpanded)
                         {
                         <div class="overflow-x-auto">
-                            <table class="w-full min-w-[980px] border-collapse text-[11px]">
-                                <thead class="bg-muted/40 text-left text-[10px] font-semibold uppercase tracking-wide text-foreground/60">
+                            <table class="w-full min-w-[940px] border-collapse text-[12px]">
+                                <thead class="bg-muted/40 text-left text-[10px] font-semibold uppercase text-foreground/60">
                                     <tr>
                                         <th class="w-64 border-b border-border/60 px-3 py-2">Component</th>
                                         <th class="border-b border-border/60 px-3 py-2">Selection</th>
@@ -126,10 +144,10 @@
                                                 @if (selected is null)
                                                 {
                                                     <button type="button"
-                                                            class="btn btn-primary min-h-7 min-w-[150px] px-3 text-[11px] font-bold"
+                                                            class="btn btn-primary h-7 min-w-24 px-3 text-[11px] font-bold"
                                                             @onclick="() => StartChoosingAsync(component)">
                                                         <span class="mr-1 text-sm leading-none">+</span>
-                                                        Choose @component.category_name
+                                                        Choose
                                                     </button>
                                                 }
                                                 else
@@ -178,11 +196,11 @@
                                             <td class="px-3 py-2">
                                                 @if (selected is not null)
                                                 {
-                                                    <a class="text-primary underline-offset-2 hover:underline" href="@($"/shop/parts/{WebUtility.UrlEncode(selected.sku)}")">Details</a>
+                                                    <a class="btn btn-soft h-7 px-2 text-[11px]" href="@($"/shop/parts/{WebUtility.UrlEncode(selected.sku)}")">Details</a>
                                                 }
                                                 else
                                                 {
-                                                    <a class="text-primary underline-offset-2 hover:underline" href="@ShopHref(component)">Shop</a>
+                                                    <a class="btn btn-ghost h-7 px-2 text-[11px]" href="@ShopHref(component)">Shop</a>
                                                 }
                                             </td>
                                         </tr>
@@ -205,7 +223,7 @@
 
 @if (ShowSaveDialog)
 {
-    <div class="fixed inset-0 z-40 bg-background/60 backdrop-blur-sm"></div>
+    <div class="fixed inset-0 z-40 bg-background/70"></div>
     <div class="fixed inset-0 z-50 grid place-items-center p-4">
         <section class="card w-full max-w-lg overflow-hidden shadow-xl">
             <div class="flex items-start justify-between gap-3 border-b border-border/60 px-4 py-3">
@@ -267,6 +285,7 @@
     private bool SaveSucceeded { get; set; }
     private bool ShowSaveDialog { get; set; }
     private string? EngineComingSoonMessage { get; set; }
+    private string? PickerInfoMessage { get; set; }
 
     private int ComponentCount => PickerData?.component_count ?? 0;
     private int NeedsCatalogCount => PickerData?.needs_catalog_count ?? 0;
@@ -281,8 +300,8 @@
         ? "No missing catalog coverage for this engine map."
         : $"{NeedsCatalogCount} components still need verified catalog parts.";
     private string CompatibilityClass => NeedsCatalogCount == 0
-        ? "flex items-center justify-between gap-3 bg-success px-4 py-2 text-sm text-white"
-        : "flex items-center justify-between gap-3 bg-warning px-4 py-2 text-sm text-white";
+        ? "flex items-center justify-between gap-3 border-b border-success/20 bg-success/10 px-4 py-2 text-sm text-success"
+        : "flex items-center justify-between gap-3 border-b border-warning/25 bg-warning/10 px-4 py-2 text-sm text-warning";
     private string SaveMessageClass => SaveSucceeded
         ? "m-4 rounded-md bg-success/10 px-3 py-2 text-sm text-success ring-1 ring-success/25"
         : "m-4 rounded-md bg-danger/10 px-3 py-2 text-sm text-danger ring-1 ring-danger/25";
@@ -315,6 +334,12 @@
             BuildTitle = DefaultBuildTitle();
             PickerState.SetEngine(SelectedEngineId, SelectedEngineCode, clearSelections: false);
             await LoadPickerAsync();
+
+            var requestedBuildId = ReadBuildIdFromQuery();
+            if (requestedBuildId.HasValue)
+            {
+                await LoadBuildIntoPickerAsync(requestedBuildId.Value);
+            }
         }
         catch (Exception ex)
         {
@@ -371,6 +396,77 @@
         }
     }
 
+    private async Task LoadBuildIntoPickerAsync(long buildId)
+    {
+        try
+        {
+            if (!Session.IsSignedIn)
+            {
+                PickerInfoMessage = "Sign in to reopen saved builds in the picker.";
+                return;
+            }
+
+            var detail = await Http.GetFromJsonAsync<BuildEnvelope>($"/api/builds/{buildId}", JsonOptions);
+            if (detail?.build is null)
+            {
+                PickerInfoMessage = "That saved build could not be loaded.";
+                return;
+            }
+
+            var engine = Engines.FirstOrDefault(e => e.engine_family_id == detail.build.engine_family_id);
+            if (engine is not null && !engine.code.Equals(ActiveEngineCode, StringComparison.OrdinalIgnoreCase))
+            {
+                EngineComingSoonMessage = $"{engine.code} picker support is coming soon. For now, we are focusing on {ActiveEngineCode}.";
+                return;
+            }
+
+            if (engine is not null && engine.engine_family_id != SelectedEngineId)
+            {
+                SelectedEngineId = engine.engine_family_id;
+                PickerState.SetEngine(SelectedEngineId, engine.code, clearSelections: true);
+                await LoadPickerAsync();
+            }
+
+            PickerState.Selections.Clear();
+            PickerState.Quantities.Clear();
+            BuildTitle = string.IsNullOrWhiteSpace(detail.build.name) ? DefaultBuildTitle() : detail.build.name!;
+            PickerState.BuildNotes = detail.build.notes ?? string.Empty;
+
+            var rows = await Http.GetFromJsonAsync<List<BuildSelectionRow>>($"/api/builds/{buildId}/selections", JsonOptions) ?? new();
+            if (PickerData is not null)
+            {
+                var slotByCategory = PickerData.groups
+                    .SelectMany(group => group.components.Select(component => new { group, component }))
+                    .GroupBy(item => item.component.category_id)
+                    .ToDictionary(group => group.Key, group => group.First());
+
+                foreach (var row in rows)
+                {
+                    if (!slotByCategory.TryGetValue(row.category_id, out var match))
+                        continue;
+
+                    PickerState.SelectPart(match.component.slot_id, new PickerPartSelection
+                    {
+                        part_id = row.part_id,
+                        sku = row.sku ?? string.Empty,
+                        name = row.part_name ?? row.sku ?? "Saved part",
+                        brand = string.Empty,
+                        category_name = row.category_name ?? match.component.category_name,
+                        category_slug = match.component.category_slug
+                    }, DecimalQuantityToInt(row.qty));
+
+                    PickerState.ExpandedGroups.Add(GroupKey(match.group));
+                }
+            }
+
+            PickerInfoMessage = $"Loaded {BuildTitle}.";
+        }
+        catch (Exception ex)
+        {
+            PickerInfoMessage = $"Unable to load saved build: {ex.Message}";
+        }
+    }
+
     private void StartChoosingAsync(PickerComponent component)
     {
         PickerState.SetEngine(SelectedEngineId, SelectedEngineCode, clearSelections: false);
@@ -392,6 +488,25 @@
         => group.subsystem_id.HasValue
             ? $"subsystem:{group.subsystem_id.Value}"
             : $"subsystem:{group.subsystem_key}:{group.subsystem_name}";
+
+    private long? ReadBuildIdFromQuery()
+    {
+        try
+        {
+            var uri = Nav.ToAbsoluteUri(Nav.Uri);
+            var query = QueryHelpers.ParseQuery(uri.Query);
+            return query.TryGetValue("build", out var value) && long.TryParse(value.ToString(), out var buildId)
+                ? buildId
+                : null;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static int DecimalQuantityToInt(decimal quantity)
+        => Math.Max(1, (int)Math.Ceiling(quantity));
 
     private static string ChevronClass(bool isExpanded)
         => isExpanded
@@ -554,7 +669,7 @@
 
             SaveSucceeded = true;
             SaveMessage = "Build saved.";
-            Nav.NavigateTo($"/builder/{created.build_id}");
+            Nav.NavigateTo("/builds");
         }
         catch (Exception ex)
         {
@@ -627,5 +742,29 @@
     private sealed class CreateBuildResponse
     {
         public long build_id { get; set; }
+    }
+
+    private sealed class BuildEnvelope
+    {
+        public SavedBuild? build { get; set; }
+        public string? role { get; set; }
+    }
+
+    private sealed class SavedBuild
+    {
+        public long build_id { get; set; }
+        public long engine_family_id { get; set; }
+        public string? name { get; set; }
+        public string? notes { get; set; }
+    }
+
+    private sealed class BuildSelectionRow
+    {
+        public long category_id { get; set; }
+        public string? category_name { get; set; }
+        public long part_id { get; set; }
+        public string? part_name { get; set; }
+        public string? sku { get; set; }
+        public decimal qty { get; set; }
     }
 }

@@ -2,32 +2,29 @@
 @inject UserSession Session
 @inject NavigationManager Nav
 
-<div class="relative min-h-dvh bg-background text-foreground overflow-x-hidden">
-    <div aria-hidden="true" class="pointer-events-none absolute inset-0 bg-radial"></div>
-    <div aria-hidden="true" class="pointer-events-none absolute inset-x-0 top-0 h-48 bg-grid opacity-40 dark:opacity-20"></div>
-
-    <header class="sticky top-0 z-40 border-b border-border/60 bg-surface/80 backdrop-blur">
+<div class="relative min-h-dvh overflow-x-hidden bg-background text-foreground">
+    <header class="sticky top-0 z-40 border-b border-border/60 bg-surface">
         <div class="container flex h-16 items-center justify-between gap-4">
-            <NavLink class="inline-flex items-center gap-2 text-sm font-semibold tracking-tight" href="/" Match="NavLinkMatch.All" ActiveClass="">
-                <span class="inline-flex h-2.5 w-2.5 animate-pulse rounded-full bg-primary"></span>
+            <NavLink class="inline-flex items-center gap-2 text-sm font-semibold" href="/" Match="NavLinkMatch.All" ActiveClass="">
+                <span class="inline-flex size-2.5 rounded-full bg-primary"></span>
                 <span>BoostedRotary.com</span>
             </NavLink>
 
-            <nav class="hidden items-center gap-6 text-sm font-medium text-foreground/70 md:flex">
-                <NavLink href="/" Match="NavLinkMatch.All" class="transition hover:text-foreground" ActiveClass="text-foreground">
+            <nav class="hidden items-center rounded-md bg-muted p-1 text-sm font-medium text-foreground/70 md:flex" aria-label="Primary navigation">
+                <NavLink href="/" Match="NavLinkMatch.All" class="rounded px-3 py-1.5 transition-colors hover:text-foreground" ActiveClass="bg-surface text-foreground shadow-sm">
                     Home
                 </NavLink>
-                <NavLink href="/builder" class="transition hover:text-foreground" ActiveClass="text-foreground">
-                    Builder
-                </NavLink>
-                <NavLink href="/picker" class="transition hover:text-foreground" ActiveClass="text-foreground">
+                <NavLink href="/picker" class="rounded px-3 py-1.5 transition-colors hover:text-foreground" ActiveClass="bg-surface text-foreground shadow-sm">
                     Picker
                 </NavLink>
-                <NavLink href="/shop" class="transition hover:text-foreground" ActiveClass="text-foreground">
+                <NavLink href="/shop" class="rounded px-3 py-1.5 transition-colors hover:text-foreground" ActiveClass="bg-surface text-foreground shadow-sm">
                     Shop
                 </NavLink>
-                <NavLink href="/builds" class="transition hover:text-foreground" ActiveClass="text-foreground">
+                <NavLink href="/builds" class="rounded px-3 py-1.5 transition-colors hover:text-foreground" ActiveClass="bg-surface text-foreground shadow-sm">
                     Builds
+                </NavLink>
+                <NavLink href="/builder" class="rounded px-3 py-1.5 transition-colors hover:text-foreground" ActiveClass="bg-surface text-foreground shadow-sm">
+                    Builder
                 </NavLink>
             </nav>
 
@@ -66,7 +63,7 @@
         </div>
     </div>
 
-    <footer class="relative z-10 border-t border-border/60 bg-surface/80 backdrop-blur">
+    <footer class="relative z-10 border-t border-border/60 bg-surface">
         <div class="container flex flex-col gap-4 py-6 text-sm text-foreground/70 sm:flex-row sm:items-center sm:justify-between">
             <p>© @DateTime.Now.Year BoostedRotary.com. All rights reserved.</p>
             <div class="flex items-center gap-4">
@@ -99,6 +96,6 @@
     }
 
     private string ShellClass => IsPickerPage
-        ? "container grid gap-4 py-5 lg:grid-cols-[220px_minmax(0,1fr)] lg:items-start"
+        ? "container grid gap-4 py-5 xl:grid-cols-[240px_minmax(0,1fr)] xl:items-start"
         : "container flex flex-col gap-8 py-10 md:flex-row";
 }

@@ -10,18 +10,24 @@
 
 <PageTitle>Choose @ComponentName</PageTitle>
 
-<section class="space-y-4 text-[12px]">
-    <div class="-mx-4 border-y border-border/60 bg-[#56587d] px-4 py-4 text-center text-white shadow-sm md:-mx-8 md:py-5">
-        <h1 class="text-xl font-bold tracking-tight text-white md:text-2xl">Choose @ComponentName</h1>
-    </div>
+<section class="space-y-3 text-[12px]">
+    <header class="rounded-md bg-surface p-4 shadow-sm ring-1 ring-border/60">
+        <div class="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+            <div>
+                <p class="text-xs font-semibold uppercase text-foreground/55">@EngineCode · @CategorySlug</p>
+                <h1 class="mt-1 text-2xl font-bold text-foreground text-balance">Choose @ComponentName</h1>
+                <p class="mt-1 text-sm text-foreground/65 text-pretty">Add a compatible part, then return to the picker with your subsystem still open.</p>
+            </div>
+            <button class="btn btn-ghost h-9 px-3 text-xs" @onclick="BackToPicker">Back to Picker</button>
+        </div>
+    </header>
 
-    <div class="mx-auto grid w-full max-w-[1160px] gap-4 md:grid-cols-[190px_1fr] md:gap-6">
+    <div class="grid w-full gap-4 lg:grid-cols-[210px_minmax(0,1fr)]">
         <aside class="space-y-3">
             <section class="rounded-md bg-surface p-3 shadow-sm ring-1 ring-border/60 md:p-4">
-                <div class="mb-3 flex items-center justify-center gap-2 text-sm font-semibold">
-                    <span>Part</span>
-                    @IconBox()
-                    <span>List</span>
+                <div class="mb-3 flex items-center gap-2 text-sm font-semibold">
+                    <span class="inline-flex size-8 items-center justify-center rounded-md bg-muted text-foreground/70">@IconBox()</span>
+                    <span>Part List</span>
                 </div>
                 <label class="flex items-center gap-2 rounded border border-border/60 px-2 py-2 text-xs">
                     <input type="checkbox" checked disabled />
@@ -30,11 +36,11 @@
                 <div class="mt-3 grid grid-cols-2 gap-3 text-[11px] font-semibold uppercase text-foreground/60">
                     <div>
                         <div>Parts</div>
-                        <div class="mt-1 text-sm text-primary">@SelectedCount</div>
+                        <div class="mt-1 text-sm text-primary tabular-nums">@SelectedCount</div>
                     </div>
                     <div>
                         <div>Total</div>
-                        <div class="mt-1 text-sm text-primary">@FormatMoney(SelectedTotal)</div>
+                        <div class="mt-1 text-sm text-primary tabular-nums">@FormatMoney(SelectedTotal)</div>
                     </div>
                 </div>
                 <div class="mt-3 text-[11px] font-semibold uppercase text-foreground/60">
@@ -48,9 +54,9 @@
                 </div>
             </section>
 
-            <details class="rounded-md bg-surface p-3 shadow-sm ring-1 ring-border/60 md:open md:bg-transparent md:p-0 md:shadow-none md:ring-0" open>
-                <summary class="cursor-pointer select-none text-base font-bold md:pointer-events-none md:cursor-default">Filters</summary>
-                <section class="mt-3 space-y-3 border-t border-border/60 pt-3 text-xs md:mt-0 md:border-t-0 md:pt-0">
+            <details class="rounded-md bg-surface p-3 shadow-sm ring-1 ring-border/60" open>
+                <summary class="cursor-pointer select-none text-sm font-bold">Filters</summary>
+                <section class="mt-3 space-y-3 border-t border-border/60 pt-3 text-xs">
                     <div>
                         <label class="label">Search</label>
                         <input class="input h-8 text-xs" placeholder="@ComponentName" @bind="Q" @bind:event="oninput" />
@@ -95,30 +101,27 @@
             </details>
         </aside>
 
-        <main>
-            <div class="mb-3 flex flex-wrap items-center justify-between gap-3 border-b border-border/60 pb-3">
+        <main class="min-w-0 rounded-md bg-surface shadow-sm ring-1 ring-border/60">
+            <div class="flex flex-wrap items-center justify-between gap-3 border-b border-border/60 p-3">
                 <div>
-                    <div class="text-lg font-bold">@TotalResults Compatible Products</div>
-                    <div class="text-xs text-foreground/60">@EngineCode · @CategorySlug</div>
-                </div>
-                <div class="flex items-center gap-2">
-                    <button class="btn btn-ghost h-8 px-3 text-xs" @onclick="BackToPicker">Back to Picker</button>
+                    <div class="text-base font-bold tabular-nums">@TotalResults Compatible Products</div>
+                    <div class="text-xs text-foreground/60">Line estimate uses quantity @Quantity per 2-rotor.</div>
                 </div>
             </div>
 
             @if (IsLoading)
             {
-                <div class="rounded-md bg-info/10 px-3 py-2 text-sm text-info ring-1 ring-info/25">Loading options...</div>
+                <div class="m-3 rounded-md bg-info/10 px-3 py-2 text-sm text-info ring-1 ring-info/25">Loading options...</div>
             }
             else if (!string.IsNullOrWhiteSpace(ErrorMessage))
             {
-                <div class="rounded-md bg-danger/10 px-3 py-2 text-sm text-danger ring-1 ring-danger/25">@ErrorMessage</div>
+                <div class="m-3 rounded-md bg-danger/10 px-3 py-2 text-sm text-danger ring-1 ring-danger/25">@ErrorMessage</div>
             }
             else
             {
                 <div class="overflow-x-auto">
                     <table class="w-full min-w-[860px] border-collapse text-[12px]">
-                        <thead class="text-left text-[10px] font-semibold uppercase tracking-wide text-foreground/60">
+                        <thead class="bg-muted/40 text-left text-[10px] font-semibold uppercase text-foreground/60">
                             <tr>
                                 <th class="w-8 border-b border-border/60 px-2 py-2"></th>
                                 <th class="border-b border-border/60 px-2 py-2">Name</th>
@@ -127,7 +130,7 @@
                                 <th class="w-24 border-b border-border/60 px-2 py-2">Availability</th>
                                 <th class="w-24 border-b border-border/60 px-2 py-2">Unit Est.</th>
                                 <th class="w-28 border-b border-border/60 px-2 py-2">Line Est.</th>
-                                <th class="sticky right-0 w-16 border-b border-border/60 bg-background px-2 py-2 text-right"></th>
+                                <th class="sticky right-0 w-16 border-b border-border/60 bg-surface px-2 py-2 text-right"></th>
                             </tr>
                         </thead>
                         <tbody>
@@ -145,8 +148,8 @@
                                             {
                                                 <div class="h-9 w-9 rounded border border-border/60 bg-muted"></div>
                                             }
-                                            <div>
-                                                <div class="font-semibold text-foreground">@part.name</div>
+                                            <div class="min-w-0">
+                                                <div class="truncate font-semibold text-foreground">@part.name</div>
                                                 <div class="text-[11px] text-foreground/55">@part.sku</div>
                                             </div>
                                         </div>
@@ -154,9 +157,9 @@
                                     <td class="px-2 py-2">@part.brand</td>
                                     <td class="px-2 py-2">@part.category_name</td>
                                     <td class="px-2 py-2">Compatible</td>
-                                    <td class="px-2 py-2 font-semibold">@FormatMoney(part.best_price)</td>
-                                    <td class="px-2 py-2 font-semibold">@FormatMoney(part.best_price.HasValue ? part.best_price.Value * Quantity : null)</td>
-                                    <td class="sticky right-0 bg-background px-2 py-2 text-right">
+                                    <td class="px-2 py-2 font-semibold tabular-nums">@FormatMoney(part.best_price)</td>
+                                    <td class="px-2 py-2 font-semibold tabular-nums">@FormatMoney(part.best_price.HasValue ? part.best_price.Value * Quantity : null)</td>
+                                    <td class="sticky right-0 bg-surface px-2 py-2 text-right">
                                         <button class="btn btn-primary min-h-7 min-w-[44px] px-2.5 text-[11px] font-bold"
                                                 @onclick="() => AddPart(part)">
                                             Add
@@ -170,14 +173,14 @@
 
                 @if (Rows.Count == 0)
                 {
-                    <div class="mt-4 rounded-md bg-warning/10 px-3 py-2 text-sm text-warning ring-1 ring-warning/25">
+                    <div class="m-3 rounded-md bg-warning/10 px-3 py-2 text-sm text-warning ring-1 ring-warning/25">
                         No verified catalog options found for this component.
                     </div>
                 }
 
                 @if ((TotalResults > PageSize || Page > 1) && Rows.Count > 0)
                 {
-                    <div class="mt-4 flex items-center justify-between border-t border-border/60 pt-3 text-xs">
+                    <div class="flex items-center justify-between border-t border-border/60 p-3 text-xs">
                         <div>Page @Page of @TotalPages</div>
                         <div class="flex gap-2">
                             <button class="btn btn-ghost h-8 px-3 text-xs" @onclick="PreviousPageAsync" disabled="@(Page <= 1 || IsLoading)">Previous</button>

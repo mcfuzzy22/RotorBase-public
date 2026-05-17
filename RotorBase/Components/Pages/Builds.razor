@@ -14,8 +14,6 @@
 <h1 class="sr-only">Builds</h1>
 
 <div class="min-h-[calc(100vh-4rem)] bg-background text-foreground">
-  <div aria-hidden="true" class="pointer-events-none absolute inset-x-0 top-0 h-32 bg-grid opacity-[.12]"></div>
-
   <section class="container py-6">
 
     @if (!string.IsNullOrEmpty(AlertMessage))
@@ -49,14 +47,14 @@
       <!-- Header -->
       <div class="mb-5 flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h2 class="text-2xl font-bold tracking-tight">Builds</h2>
-          <div class="text-sm text-foreground/70">
+          <h2 class="text-balance text-2xl font-bold">Builds</h2>
+          <div class="text-pretty text-sm text-foreground/70">
             Active builds: <span class="badge">@ActiveBuildsSummary</span>
             · Total builds: <span class="badge">@TotalBuildsSummary</span>
           </div>
         </div>
         <div class="flex items-center gap-2">
-          <NavLink class="btn btn-primary" href="/builder">Open Builder</NavLink>
+          <NavLink class="btn btn-primary" href="/picker">Open Picker</NavLink>
           <button class="btn btn-ghost" @onclick="Reload">Refresh</button>
         </div>
       </div>
@@ -75,7 +73,10 @@
             <div class="grow">
               <div class="relative">
                 <input class="input pl-9" placeholder="Search builds" value="@Search" @oninput="OnSearchInput" />
-                <span class="pointer-events-none absolute left-2.5 top-2.5 text-foreground/50">🔎</span>
+                <svg class="pointer-events-none absolute left-2.5 top-2.5 size-4 text-foreground/50" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
+                  <circle cx="11" cy="11" r="7"></circle>
+                  <path d="m16.5 16.5 4 4"></path>
+                </svg>
               </div>
             </div>
 
@@ -92,8 +93,9 @@
 
           @if (_builds.Count == 0)
           {
-            <div class="text-sm text-foreground/70">
-              No builds found. Visit the builder to create and save your first build.
+            <div class="flex flex-col gap-3 rounded-md bg-muted/40 p-4 text-sm text-foreground/70 sm:flex-row sm:items-center sm:justify-between">
+              <span>No builds found. Use the picker to create and save your first rotary parts list.</span>
+              <NavLink class="btn btn-primary" href="/picker">Open Picker</NavLink>
             </div>
           }
           else
@@ -127,7 +129,7 @@
                         {
                           <div class="flex flex-wrap items-center gap-2">
                             <button class="text-left text-sm font-semibold text-primary hover:underline"
-                                    title="Open in Builder" @onclick="() => OpenBuild(build)">
+                                    title="Open build" @onclick="() => OpenBuild(build)">
                               @build.Name
                             </button>
 
@@ -229,7 +231,7 @@
 
 @if (_pendingDelete is not null)
 {
-  <div class="fixed inset-0 z-40 bg-background/60 backdrop-blur-sm"></div>
+  <div class="fixed inset-0 z-40 bg-background/70"></div>
   <div class="fixed inset-0 z-50 grid place-items-center p-4">
     <div class="card w-full max-w-md overflow-hidden">
       <div class="flex items-center justify-between border-b border-border/60 px-4 py-3">
@@ -487,7 +489,7 @@
 
     private void Share(BuildRow build) => Nav.NavigateTo($"/builds/{build.BuildId}/share");
 
-    private void OpenBuild(BuildRow build) => Nav.NavigateTo($"/builder/{build.BuildId}");
+    private void OpenBuild(BuildRow build) => Nav.NavigateTo($"/picker?build={build.BuildId}");
 
     private void OpenPublic(BuildRow build)
     {

@@ -11,12 +11,10 @@
 <h1 class="sr-only">Manage Sharing</h1>
 
 <div class="min-h-[calc(100vh-4rem)] bg-background text-foreground">
-  <div aria-hidden="true" class="pointer-events-none absolute inset-x-0 top-0 h-32 bg-grid opacity-[.12]"></div>
-
   <section class="container py-6">
     <div class="mb-5 flex flex-wrap items-center justify-between gap-3">
-      <h2 class="text-2xl font-bold tracking-tight">Manage Sharing</h2>
-      <a class="btn btn-ghost" href=$"/builder/{BuildId}">Back to Builder</a>
+      <h2 class="text-balance text-2xl font-bold">Manage Sharing</h2>
+      <a class="btn btn-ghost" href="/builds">Back to Builds</a>
     </div>
 
     @if (!string.IsNullOrEmpty(ErrorMessage))

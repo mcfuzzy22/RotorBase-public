@@ -11,12 +11,10 @@
 <h1 class="sr-only">Community Builds</h1>
 
 <div class="min-h-[calc(100vh-4rem)] bg-background text-foreground">
-  <div aria-hidden="true" class="pointer-events-none absolute inset-x-0 top-0 h-32 bg-grid opacity-[.12]"></div>
-
   <section class="container py-6">
     <!-- Heading -->
     <div class="mb-3">
-      <h2 class="text-2xl md:text-3xl font-bold tracking-tight">Community Builds</h2>
+      <h2 class="text-balance text-2xl font-bold md:text-3xl">Community Builds</h2>
       <p class="text-sm text-foreground/70">Browse public builds shared by the community. View, clone, or jump straight to a buy plan.</p>
     </div>
 
@@ -85,7 +83,7 @@
         {
           <article class="card h-full p-4 flex flex-col">
             <header class="flex items-start justify-between gap-3">
-              <div class="text-[11px] uppercase tracking-wide text-foreground/60">@item.EngineCode</div>
+              <div class="text-[11px] font-semibold uppercase text-foreground/60">@item.EngineCode</div>
               <time class="text-xs text-foreground/50">@item.UpdatedAt.ToLocalTime().ToString("g")</time>
             </header>
 
@@ -293,7 +291,7 @@
                 if (doc is JsonElement el && el.TryGetProperty("build_id", out var idNode) && idNode.TryGetInt64(out var id))
                 {
                     CloneSuccess = "Build cloned to your workspace.";
-                    Nav.NavigateTo($"/builder/{id}");
+                    Nav.NavigateTo("/builds");
                 }
                 else
                 {
