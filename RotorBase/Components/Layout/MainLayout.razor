@@ -57,7 +57,7 @@
                 <SidebarApp />
             }
 
-            <main class="flex-1 space-y-6">
+            <main class="min-w-0 flex-1 space-y-6">
                 <PlanUsageBanner />
                 <div class="space-y-6">
                     @Body
@@ -99,6 +99,6 @@
     }
 
     private string ShellClass => IsPickerPage
-        ? "container flex flex-col gap-4 py-5 md:flex-row md:items-start"
+        ? "container grid gap-4 py-5 lg:grid-cols-[220px_minmax(0,1fr)] lg:items-start"
         : "container flex flex-col gap-8 py-10 md:flex-row";
 }
