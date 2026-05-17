@@ -54,6 +54,13 @@
             <div class="hidden font-semibold md:block">@SelectedEngineCode</div>
         </div>
 
+        @if (!string.IsNullOrWhiteSpace(EngineComingSoonMessage))
+        {
+            <div class="border-b border-border/60 bg-info/10 px-4 py-2 text-sm font-medium text-info">
+                @EngineComingSoonMessage
+            </div>
+        }
+
         @if (IsLoadingEngines || IsLoadingPicker)
         {
             <div class="p-5 text-sm text-foreground/70">Loading picker...</div>
@@ -244,6 +251,7 @@
 }
 
 @code {
+    private const string ActiveEngineCode = "13B Turbo II S5";
     private readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
     private List<EngineOption> Engines { get; set; } = new();
@@ -258,6 +266,7 @@
     private bool IsSavingBuild { get; set; }
     private bool SaveSucceeded { get; set; }
     private bool ShowSaveDialog { get; set; }
+    private string? EngineComingSoonMessage { get; set; }
 
     private int ComponentCount => PickerData?.component_count ?? 0;
     private int NeedsCatalogCount => PickerData?.needs_catalog_count ?? 0;
@@ -292,10 +301,7 @@
         try
         {
             Engines = await Http.GetFromJsonAsync<List<EngineOption>>("/api/engine-families", JsonOptions) ?? new();
-            var preferred = Engines.FirstOrDefault(e => e.code.Equals("13B-REW S6", StringComparison.OrdinalIgnoreCase))
-                ?? Engines.FirstOrDefault(e => e.code.Equals("13B-REW-S6", StringComparison.OrdinalIgnoreCase))
-                ?? Engines.FirstOrDefault(e => e.code.Equals("13B-REW", StringComparison.OrdinalIgnoreCase))
-                ?? Engines.FirstOrDefault(e => e.code.Contains("13B-REW", StringComparison.OrdinalIgnoreCase))
+            var preferred = Engines.FirstOrDefault(e => e.code.Equals(ActiveEngineCode, StringComparison.OrdinalIgnoreCase))
                 ?? Engines.FirstOrDefault(e => e.slot_count > 0)
                 ?? Engines.FirstOrDefault();
 
@@ -325,6 +331,18 @@
         if (!long.TryParse(Convert.ToString(args.Value, CultureInfo.InvariantCulture), out var engineId) || engineId == SelectedEngineId)
             return;
 
+        var requested = Engines.FirstOrDefault(e => e.engine_family_id == engineId);
+        if (requested is null)
+            return;
+
+        if (!requested.code.Equals(ActiveEngineCode, StringComparison.OrdinalIgnoreCase))
+        {
+            EngineComingSoonMessage = $"{requested.code} picker support is coming soon. For now, we are focusing on {ActiveEngineCode}.";
+            await InvokeAsync(StateHasChanged);
+            return;
+        }
+
+        EngineComingSoonMessage = null;
         SelectedEngineId = engineId;
         PickerState.SetEngine(SelectedEngineId, SelectedEngineCode, clearSelections: true);
         BuildTitle = DefaultBuildTitle();
