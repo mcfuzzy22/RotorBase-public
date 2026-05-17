@@ -710,6 +710,16 @@ async Task EnsureBuildColumnsAsync(MySqlConnection conn, CancellationToken ct)
         }
     }
 
+    await using (var checkCmd = new MySqlCommand("SHOW COLUMNS FROM Build LIKE 'notes'", conn))
+    {
+        var notesExists = await checkCmd.ExecuteScalarAsync(ct) is not null;
+        if (!notesExists)
+        {
+            await using var alterNotes = new MySqlCommand("ALTER TABLE Build ADD COLUMN notes TEXT NULL AFTER name", conn);
+            await alterNotes.ExecuteNonQueryAsync(ct);
+        }
+    }
+
     await using (var checkCmd = new MySqlCommand("SHOW COLUMNS FROM Build LIKE 'is_public'", conn))
     {
         var publicExists = await checkCmd.ExecuteScalarAsync(ct) is not null;
@@ -15152,6 +15162,9 @@ app.MapPost("/api/builds", async (HttpContext ctx, IGamification gamification, C
     var name = string.IsNullOrWhiteSpace(request.Name)
         ? $"Build {DateTime.UtcNow:yyyyMMdd-HHmmss}"
         : request.Name.Trim();
+    var notes = string.IsNullOrWhiteSpace(request.Notes)
+        ? null
+        : request.Notes.Trim();
 
     var isArchived = request.IsArchived ?? false;
     var isShared = request.IsShared ?? false;
@@ -15187,11 +15200,12 @@ app.MapPost("/api/builds", async (HttpContext ctx, IGamification gamification, C
 
         try
         {
-            await using var cmd = new MySqlCommand("INSERT INTO Build(user_id, engine_family_id, tree_id, name, is_archived, is_shared) VALUES (@user, @ef, @tree, @name, @archived, @shared); SELECT LAST_INSERT_ID();", conn);
+            await using var cmd = new MySqlCommand("INSERT INTO Build(user_id, engine_family_id, tree_id, name, notes, is_archived, is_shared) VALUES (@user, @ef, @tree, @name, @notes, @archived, @shared); SELECT LAST_INSERT_ID();", conn);
             cmd.Parameters.AddWithValue("@user", userId.Value);
             cmd.Parameters.AddWithValue("@ef", engineFamilyId);
             cmd.Parameters.AddWithValue("@tree", treeId);
             cmd.Parameters.AddWithValue("@name", name);
+            cmd.Parameters.AddWithValue("@notes", (object?)notes ?? DBNull.Value);
             cmd.Parameters.AddWithValue("@archived", isArchived);
             cmd.Parameters.AddWithValue("@shared", isShared);
             var id = Convert.ToInt64(await cmd.ExecuteScalarAsync(ct));
@@ -15256,8 +15270,9 @@ app.MapPost("/api/builds/{id:long}/duplicate", async (long id, HttpContext ctx, 
         long engineFamilyId;
         long? treeId = null;
         string sourceName;
+        string? sourceNotes = null;
 
-        await using (var fetch = new MySqlCommand("SELECT user_id, engine_family_id, tree_id, name FROM Build WHERE build_id=@id", conn))
+        await using (var fetch = new MySqlCommand("SELECT user_id, engine_family_id, tree_id, name, notes FROM Build WHERE build_id=@id", conn))
         {
             fetch.Parameters.AddWithValue("@id", id);
             await using var reader = await fetch.ExecuteReaderAsync(ct);
@@ -15268,6 +15283,7 @@ app.MapPost("/api/builds/{id:long}/duplicate", async (long id, HttpContext ctx, 
             engineFamilyId = reader.GetInt64(1);
             treeId = reader.IsDBNull(2) ? null : reader.GetInt64(2);
             sourceName = reader.IsDBNull(3) ? "Untitled Build" : reader.GetString(3);
+            sourceNotes = reader.IsDBNull(4) ? null : reader.GetString(4);
         }
 
         var role = await GetBuildRoleAsync(conn, id, userId.Value, ct);
@@ -15281,12 +15297,13 @@ app.MapPost("/api/builds/{id:long}/duplicate", async (long id, HttpContext ctx, 
             var newName = string.IsNullOrWhiteSpace(sourceName) ? "Copied Build" : $"{sourceName} (copy)";
 
             long newBuildId;
-            await using (var insert = new MySqlCommand("INSERT INTO Build(user_id, engine_family_id, tree_id, name, is_archived, is_shared) VALUES(@user, @engine, @tree, @name, FALSE, FALSE); SELECT LAST_INSERT_ID();", conn, (MySqlTransaction)tx))
+            await using (var insert = new MySqlCommand("INSERT INTO Build(user_id, engine_family_id, tree_id, name, notes, is_archived, is_shared) VALUES(@user, @engine, @tree, @name, @notes, FALSE, FALSE); SELECT LAST_INSERT_ID();", conn, (MySqlTransaction)tx))
             {
                 insert.Parameters.AddWithValue("@user", userId.Value);
                 insert.Parameters.AddWithValue("@engine", engineFamilyId);
                 insert.Parameters.AddWithValue("@tree", (object?)treeId ?? DBNull.Value);
                 insert.Parameters.AddWithValue("@name", newName);
+                insert.Parameters.AddWithValue("@notes", (object?)sourceNotes ?? DBNull.Value);
                 newBuildId = Convert.ToInt64(await insert.ExecuteScalarAsync(ct));
             }
 
@@ -17538,6 +17555,7 @@ app.MapGet("/api/builds", async (HttpContext ctx, ILogger<Program> logger, Cance
         await conn.OpenAsync(ct);
 
         // Ensure supporting tables exist (older installs may lack BuildShare)
+        await EnsureBuildColumnsAsync(conn, ct);
         await EnsureShareTablesAsync(conn, ct);
 
         var hasSummary = await ViewExistsAsync(conn, "v_build_summary", ct);
@@ -17552,6 +17570,7 @@ app.MapGet("/api/builds", async (HttpContext ctx, ILogger<Program> logger, Cance
 SELECT
     b.build_id,
     b.name,
+    b.notes,
     b.is_archived,
     b.updated_at,
     ef.code AS engine_code,
@@ -17591,17 +17610,18 @@ LIMIT @take OFFSET @skip";
             {
                 ["build_id"] = reader.GetInt64(0),
                 ["name"] = reader.IsDBNull(1) ? null : reader.GetString(1),
-                ["is_archived"] = !reader.IsDBNull(2) && reader.GetBoolean(2),
-                ["updated_at"] = reader.GetDateTime(3),
-                ["engine_code"] = reader.IsDBNull(4) ? null : reader.GetString(4),
-                ["completion_pct"] = reader.IsDBNull(5) ? 0m : Convert.ToDecimal(reader.GetValue(5)),
-                ["categories_complete"] = reader.IsDBNull(6) ? 0 : Convert.ToInt32(reader.GetValue(6)),
-                ["categories_total"] = reader.IsDBNull(7) ? 0 : Convert.ToInt32(reader.GetValue(7)),
-                ["estimated_cost_lowest"] = reader.IsDBNull(8) ? null : reader.GetValue(8),
-                ["is_public"] = !reader.IsDBNull(9) && reader.GetBoolean(9),
-                ["public_slug"] = reader.IsDBNull(10) ? null : reader.GetString(10),
-                ["is_owner"] = !reader.IsDBNull(11) && reader.GetBoolean(11),
-                ["access_role"] = reader.IsDBNull(12) ? null : reader.GetString(12)
+                ["notes"] = reader.IsDBNull(2) ? null : reader.GetString(2),
+                ["is_archived"] = !reader.IsDBNull(3) && reader.GetBoolean(3),
+                ["updated_at"] = reader.GetDateTime(4),
+                ["engine_code"] = reader.IsDBNull(5) ? null : reader.GetString(5),
+                ["completion_pct"] = reader.IsDBNull(6) ? 0m : Convert.ToDecimal(reader.GetValue(6)),
+                ["categories_complete"] = reader.IsDBNull(7) ? 0 : Convert.ToInt32(reader.GetValue(7)),
+                ["categories_total"] = reader.IsDBNull(8) ? 0 : Convert.ToInt32(reader.GetValue(8)),
+                ["estimated_cost_lowest"] = reader.IsDBNull(9) ? null : reader.GetValue(9),
+                ["is_public"] = !reader.IsDBNull(10) && reader.GetBoolean(10),
+                ["public_slug"] = reader.IsDBNull(11) ? null : reader.GetString(11),
+                ["is_owner"] = !reader.IsDBNull(12) && reader.GetBoolean(12),
+                ["access_role"] = reader.IsDBNull(13) ? null : reader.GetString(13)
             };
 
             rows.Add(row);
@@ -17634,11 +17654,12 @@ app.MapGet("/api/builds/{id:long}", async (long id, HttpContext ctx, Cancellatio
     {
         await using var conn = new MySqlConnection(connectionString);
         await conn.OpenAsync(ct);
+        await EnsureBuildColumnsAsync(conn, ct);
 
         var role = await GetBuildRoleAsync(conn, id, userId.Value, ct);
         if (role is null) return Results.Forbid();
 
-        await using var cmd = new MySqlCommand("SELECT build_id, user_id, engine_family_id, tree_id, name, is_archived, is_shared, is_public, public_slug, created_at, updated_at FROM Build WHERE build_id=@id", conn);
+        await using var cmd = new MySqlCommand("SELECT build_id, user_id, engine_family_id, tree_id, name, notes, is_archived, is_shared, is_public, public_slug, created_at, updated_at FROM Build WHERE build_id=@id", conn);
         cmd.Parameters.AddWithValue("@id", id);
         await using var reader = await cmd.ExecuteReaderAsync(ct);
         if (!await reader.ReadAsync(ct)) return Results.NotFound(new { error = "Build not found" });
@@ -17649,12 +17670,13 @@ app.MapGet("/api/builds/{id:long}", async (long id, HttpContext ctx, Cancellatio
             ["engine_family_id"] = reader.GetInt64(2),
             ["tree_id"] = reader.IsDBNull(3) ? null : reader.GetValue(3),
             ["name"] = reader.IsDBNull(4) ? null : reader.GetString(4),
-            ["is_archived"] = !reader.IsDBNull(5) && reader.GetBoolean(5),
-            ["is_shared"] = !reader.IsDBNull(6) && reader.GetBoolean(6),
-            ["is_public"] = !reader.IsDBNull(7) && reader.GetBoolean(7),
-            ["public_slug"] = reader.IsDBNull(8) ? null : reader.GetString(8),
-            ["created_at"] = reader.GetDateTime(9),
-            ["updated_at"] = reader.GetDateTime(10)
+            ["notes"] = reader.IsDBNull(5) ? null : reader.GetString(5),
+            ["is_archived"] = !reader.IsDBNull(6) && reader.GetBoolean(6),
+            ["is_shared"] = !reader.IsDBNull(7) && reader.GetBoolean(7),
+            ["is_public"] = !reader.IsDBNull(8) && reader.GetBoolean(8),
+            ["public_slug"] = reader.IsDBNull(9) ? null : reader.GetString(9),
+            ["created_at"] = reader.GetDateTime(10),
+            ["updated_at"] = reader.GetDateTime(11)
         };
 
         return Results.Json(new { build = payload, role });

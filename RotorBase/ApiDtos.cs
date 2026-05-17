@@ -8,6 +8,7 @@ public class CreateBuildRequest
 {
     [JsonPropertyName("engine_family_id")] public long EngineFamilyId { get; set; }
     [JsonPropertyName("name")] public string? Name { get; set; }
+    [JsonPropertyName("notes")] public string? Notes { get; set; }
     [JsonPropertyName("tree_id")] public long? TreeId { get; set; }
     [JsonPropertyName("is_archived")] public bool? IsArchived { get; set; }
     [JsonPropertyName("is_shared")] public bool? IsShared { get; set; }

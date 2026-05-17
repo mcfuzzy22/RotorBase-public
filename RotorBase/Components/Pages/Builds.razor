@@ -149,6 +149,10 @@
                           {
                             <div class="text-xs text-foreground/60">Engine: @build.EngineCode</div>
                           }
+                          @if (!string.IsNullOrWhiteSpace(build.Notes))
+                          {
+                            <div class="mt-1 max-w-xl text-xs leading-5 text-foreground/65">@NotePreview(build.Notes)</div>
+                          }
                         }
                       </td>
 
@@ -665,6 +669,12 @@
             _ => false
         };
 
+    private static string NotePreview(string? notes)
+    {
+        var value = string.IsNullOrWhiteSpace(notes) ? string.Empty : notes.Trim();
+        return value.Length <= 180 ? value : $"{value[..180]}...";
+    }
+
     public void Dispose()
     {
         Session.Changed -= OnSessionChanged;
@@ -674,6 +684,7 @@
     {
         [JsonPropertyName("build_id")] public long BuildId { get; set; }
         [JsonPropertyName("name")] public string Name { get; set; } = string.Empty;
+        [JsonPropertyName("notes")] public string? Notes { get; set; }
         [JsonPropertyName("is_archived")] public bool IsArchived { get; set; }
         [JsonPropertyName("engine_code")] public string? EngineCode { get; set; }
         [JsonPropertyName("completion_pct")] public decimal CompletionPct { get; set; }

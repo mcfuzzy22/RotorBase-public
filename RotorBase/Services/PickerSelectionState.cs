@@ -7,6 +7,7 @@ public sealed class PickerSelectionState
     public Dictionary<long, PickerPartSelection> Selections { get; } = new();
     public Dictionary<long, int> Quantities { get; } = new();
     public HashSet<string> ExpandedGroups { get; } = new(StringComparer.OrdinalIgnoreCase);
+    public string BuildNotes { get; set; } = string.Empty;
 
     public void SetEngine(long engineFamilyId, string engineCode, bool clearSelections)
     {
