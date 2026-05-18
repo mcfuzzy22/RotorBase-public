@@ -23,7 +23,7 @@
                 </p>
             </div>
             <div class="flex flex-wrap gap-2">
-                <span class="badge tabular-nums">@SelectedCount / @ComponentCount selected</span>
+                <span class="badge tabular-nums">@HandledCount / @ComponentCount handled</span>
                 <span class="badge tabular-nums">Estimated cost: @FormatMoney(SelectedTotal)</span>
                 <span class="badge tabular-nums">@NeedsCatalogCount need catalog</span>
             </div>
@@ -120,6 +120,7 @@
                             <table class="w-full min-w-[940px] border-collapse text-[12px]">
                                 <thead class="bg-muted/40 text-left text-[10px] font-semibold uppercase text-foreground/60">
                                     <tr>
+                                        <th class="w-24 border-b border-border/60 px-3 py-2">Have</th>
                                         <th class="w-64 border-b border-border/60 px-3 py-2">Component</th>
                                         <th class="border-b border-border/60 px-3 py-2">Selection</th>
                                         <th class="w-28 border-b border-border/60 px-3 py-2">Qty / 2 Rotor</th>
@@ -143,12 +144,20 @@
                                         if (IsCoreOnlyPicker && !string.Equals(sectionName, previousSectionName, StringComparison.Ordinal))
                                         {
                                             <tr>
-                                                <td colspan="7" class="border-b border-border/60 bg-muted/50 px-3 py-2 text-[11px] font-bold uppercase text-foreground/65">
+                                                <td colspan="8" class="border-b border-border/60 bg-muted/50 px-3 py-2 text-[11px] font-bold uppercase text-foreground/65">
                                                     @sectionName
                                                 </td>
                                             </tr>
                                         }
                                         <tr class="border-b border-border/60 align-top hover:bg-muted/30">
+                                            <td class="px-3 py-2">
+                                                <label class="inline-flex items-center gap-2 text-xs font-medium text-foreground/70">
+                                                    <input type="checkbox"
+                                                           checked="@IsAlreadyHave(component.slot_id)"
+                                                           @onchange="args => SetAlreadyHave(component.slot_id, args.Value)" />
+                                                    <span>Already have</span>
+                                                </label>
+                                            </td>
                                             <td class="px-3 py-2">
                                                 <button class="text-left font-semibold text-primary underline-offset-2 hover:underline"
                                                         @onclick="() => StartChoosingAsync(component)">
@@ -157,7 +166,14 @@
                                                 <div class="mt-1 text-xs text-foreground/55">@component.slot_name</div>
                                             </td>
                                             <td class="px-3 py-2">
-                                                @if (selected is null)
+                                                @if (IsAlreadyHave(component.slot_id))
+                                                {
+                                                    <div class="flex flex-wrap items-center gap-2">
+                                                        <span class="rounded-full bg-success/10 px-2 py-0.5 text-xs font-semibold text-success">Already have</span>
+                                                        <button class="btn btn-ghost h-6 px-2 text-[11px]" @onclick="() => ClearSelection(component.slot_id)">Clear</button>
+                                                    </div>
+                                                }
+                                                else if (selected is null)
                                                 {
                                                     <button type="button"
                                                             class="btn btn-primary h-7 min-w-24 px-3 text-[11px] font-bold"
@@ -245,7 +261,7 @@
             <div class="flex items-start justify-between gap-3 border-b border-border/60 px-4 py-3">
                 <div>
                     <h2 class="text-lg font-semibold">Save build</h2>
-                    <p class="text-sm text-foreground/60">@SelectedEngineCode · @SelectedCount selected · @FormatMoney(SelectedTotal)</p>
+                    <p class="text-sm text-foreground/60">@SelectedEngineCode · @HandledCount handled · @FormatMoney(SelectedTotal)</p>
                 </div>
                 <button class="btn btn-ghost h-8 px-2" @onclick="CloseSaveDialog" aria-label="Close">x</button>
             </div>
@@ -309,7 +325,9 @@
         && string.Equals(PickerData.groups[0].subsystem_name, "Core", StringComparison.OrdinalIgnoreCase);
     private Dictionary<long, PickerPartSelection> Selections => PickerState.Selections;
     private Dictionary<long, int> Quantities => PickerState.Quantities;
+    private HashSet<long> AlreadyHaveSlots => PickerState.AlreadyHaveSlots;
     private int SelectedCount => PickerState.Selections.Count;
+    private int HandledCount => PickerState.Selections.Count + PickerState.AlreadyHaveSlots.Count;
     private decimal? SelectedTotal => PickerState.Selections.Values.Any(v => v.best_price.HasValue)
         ? PickerState.Selections.Sum(selection => (selection.Value.best_price ?? 0m) * GetQuantity(selection.Key))
         : null;
@@ -447,16 +465,33 @@
 
             PickerState.Selections.Clear();
             PickerState.Quantities.Clear();
+            PickerState.AlreadyHaveSlots.Clear();
             BuildTitle = string.IsNullOrWhiteSpace(detail.build.name) ? DefaultBuildTitle() : detail.build.name!;
             PickerState.BuildNotes = detail.build.notes ?? string.Empty;
 
             var rows = await Http.GetFromJsonAsync<List<BuildSelectionRow>>($"/api/builds/{buildId}/selections", JsonOptions) ?? new();
+            var alreadyHave = await Http.GetFromJsonAsync<AlreadyHaveResponse>($"/api/builds/{buildId}/already-have", JsonOptions);
+            foreach (var slotId in alreadyHave?.slot_ids ?? new List<long>())
+            {
+                PickerState.AlreadyHaveSlots.Add(slotId);
+            }
+
             if (PickerData is not null)
             {
                 var slotByCategory = PickerData.groups
                     .SelectMany(group => group.components.Select(component => new { group, component }))
                     .GroupBy(item => item.component.category_id)
                     .ToDictionary(group => group.Key, group => group.First());
+                var slotBySlot = PickerData.groups
+                    .SelectMany(group => group.components.Select(component => new { group, component }))
+                    .GroupBy(item => item.component.slot_id)
+                    .ToDictionary(group => group.Key, group => group.First());
+
+                foreach (var slotId in PickerState.AlreadyHaveSlots)
+                {
+                    if (slotBySlot.TryGetValue(slotId, out var match))
+                        PickerState.ExpandedGroups.Add(GroupKey(match.group));
+                }
 
                 foreach (var row in rows)
                 {
@@ -538,6 +573,15 @@
         SaveMessage = null;
     }
 
+    private bool IsAlreadyHave(long slotId) => AlreadyHaveSlots.Contains(slotId);
+
+    private void SetAlreadyHave(long slotId, object? value)
+    {
+        var alreadyHave = value is bool b && b;
+        PickerState.SetAlreadyHave(slotId, alreadyHave);
+        SaveMessage = null;
+    }
+
     private int GetQuantity(long slotId) => Quantities.TryGetValue(slotId, out var quantity) ? Math.Max(1, quantity) : 1;
 
     private int GetQuantity(PickerComponent component)
@@ -608,11 +652,11 @@
     private static int CoreSectionSort(PickerComponent component)
     {
         var key = CoreKey(component);
-        if (ContainsAny(key, "rotor-housing", "side-plate", "centre-plate", "bearing-plate", "front-rotor", "rear-rotor"))
+        if (ContainsAny(key, "rotor-housing", "side-plate", "centre-plate", "front-rotor", "rear-rotor"))
             return 10;
         if (ContainsAny(key, "eccentric-shaft", "counter-weight", "key-weight", "eccentric-pulley", "endplay-spacer", "thrust-plate", "torrington-bearing"))
             return 20;
-        if (ContainsAny(key, "stationary-gear", "stat-bearing", "rotor-bearing"))
+        if (ContainsAny(key, "stationary-gear", "stat-bearing", "rotor-bearing", "bearing-plate"))
             return 30;
         if (ContainsAny(key, "apex", "corner-seal", "side-seal", "oil-control-ring", "water-jacket-seal", "thermel-pellet"))
             return 40;
@@ -689,9 +733,9 @@
         SaveMessage = null;
         SaveSucceeded = false;
 
-        if (Selections.Count == 0)
+        if (HandledCount == 0)
         {
-            SaveMessage = "Choose at least one component before saving.";
+            SaveMessage = "Choose or mark at least one component before saving.";
             return;
         }
 
@@ -727,6 +771,16 @@
             if (created is null || created.build_id <= 0)
             {
                 SaveMessage = "Build was created, but the response did not include a build id.";
+                return;
+            }
+
+            var alreadyHaveResponse = await Http.PutAsJsonAsync($"/api/builds/{created.build_id}/already-have", new
+            {
+                slot_ids = AlreadyHaveSlots.ToArray()
+            });
+            if (!alreadyHaveResponse.IsSuccessStatusCode)
+            {
+                SaveMessage = await BuildErrorMessageAsync(alreadyHaveResponse, "Build was created, but already-have rows could not be saved.");
                 return;
             }
 
@@ -849,5 +903,10 @@
         public string? part_name { get; set; }
         public string? sku { get; set; }
         public decimal qty { get; set; }
+    }
+
+    private sealed class AlreadyHaveResponse
+    {
+        public List<long> slot_ids { get; set; } = new();
     }
 }

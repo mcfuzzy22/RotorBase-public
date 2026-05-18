@@ -6,6 +6,7 @@ public sealed class PickerSelectionState
     public string EngineCode { get; private set; } = string.Empty;
     public Dictionary<long, PickerPartSelection> Selections { get; } = new();
     public Dictionary<long, int> Quantities { get; } = new();
+    public HashSet<long> AlreadyHaveSlots { get; } = new();
     public HashSet<string> ExpandedGroups { get; } = new(StringComparer.OrdinalIgnoreCase);
     public string BuildNotes { get; set; } = string.Empty;
 
@@ -15,6 +16,7 @@ public sealed class PickerSelectionState
         {
             Selections.Clear();
             Quantities.Clear();
+            AlreadyHaveSlots.Clear();
             ExpandedGroups.Clear();
         }
 
@@ -24,6 +26,7 @@ public sealed class PickerSelectionState
 
     public void SelectPart(long slotId, PickerPartSelection part, int quantity)
     {
+        AlreadyHaveSlots.Remove(slotId);
         Selections[slotId] = part;
         Quantities[slotId] = Math.Max(1, quantity);
     }
@@ -31,6 +34,19 @@ public sealed class PickerSelectionState
     public void ClearSlot(long slotId)
     {
         Selections.Remove(slotId);
+        AlreadyHaveSlots.Remove(slotId);
+    }
+
+    public void SetAlreadyHave(long slotId, bool alreadyHave)
+    {
+        if (alreadyHave)
+        {
+            Selections.Remove(slotId);
+            AlreadyHaveSlots.Add(slotId);
+            return;
+        }
+
+        AlreadyHaveSlots.Remove(slotId);
     }
 }
 

@@ -17743,6 +17743,106 @@ app.MapGet("/api/builds/{id:long}/selections", async (long id, CancellationToken
     }
 }).RequireAuthorization("BuildOwnerOrEditor");
 
+// Picker rows marked as already owned. These do not create build selections or buy-plan items.
+app.MapGet("/api/builds/{id:long}/already-have", async (long id, CancellationToken ct) =>
+{
+    if (string.IsNullOrWhiteSpace(connectionString))
+        return Results.Problem(title: "Missing connection string", detail: "ConnectionStrings not set", statusCode: 500);
+
+    try
+    {
+        await using var conn = new MySqlConnection(connectionString);
+        await conn.OpenAsync(ct);
+        await conn.ExecuteAsync(new CommandDefinition(
+            @"CREATE TABLE IF NOT EXISTS BuildAlreadyHave (
+                build_id BIGINT UNSIGNED NOT NULL,
+                slot_id BIGINT UNSIGNED NOT NULL,
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (build_id, slot_id),
+                CONSTRAINT fk_bah_build FOREIGN KEY (build_id) REFERENCES Build(build_id) ON DELETE CASCADE,
+                CONSTRAINT fk_bah_slot FOREIGN KEY (slot_id) REFERENCES Slot(slot_id) ON DELETE CASCADE
+              );",
+            cancellationToken: ct));
+
+        var slotIds = (await conn.QueryAsync<long>(new CommandDefinition(
+            "SELECT CAST(slot_id AS SIGNED) FROM BuildAlreadyHave WHERE build_id=@id ORDER BY slot_id",
+            new { id },
+            cancellationToken: ct))).ToList();
+
+        return Results.Json(new { slot_ids = slotIds });
+    }
+    catch (Exception ex)
+    {
+        return Results.Problem(title: "Query failed", detail: ex.Message, statusCode: 500);
+    }
+}).RequireAuthorization("BuildOwnerOrEditor");
+
+app.MapPut("/api/builds/{id:long}/already-have", async (long id, AlreadyHaveSlotsRequest body, HttpContext ctx, CancellationToken ct) =>
+{
+    if (string.IsNullOrWhiteSpace(connectionString))
+        return Results.Problem(title: "Missing connection string", detail: "ConnectionStrings not set", statusCode: 500);
+
+    var userId = ctx.User.TryGetUserId();
+    if (userId is null) return Results.Unauthorized();
+
+    try
+    {
+        await using var conn = new MySqlConnection(connectionString);
+        await conn.OpenAsync(ct);
+
+        var role = await GetBuildRoleAsync(conn, id, userId.Value, ct);
+        if (role is null || role == "viewer") return Results.Forbid();
+
+        await conn.ExecuteAsync(new CommandDefinition(
+            @"CREATE TABLE IF NOT EXISTS BuildAlreadyHave (
+                build_id BIGINT UNSIGNED NOT NULL,
+                slot_id BIGINT UNSIGNED NOT NULL,
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (build_id, slot_id),
+                CONSTRAINT fk_bah_build FOREIGN KEY (build_id) REFERENCES Build(build_id) ON DELETE CASCADE,
+                CONSTRAINT fk_bah_slot FOREIGN KEY (slot_id) REFERENCES Slot(slot_id) ON DELETE CASCADE
+              );",
+            cancellationToken: ct));
+
+        var slotIds = (body.SlotIds ?? new List<long>())
+            .Where(slotId => slotId > 0)
+            .Distinct()
+            .ToList();
+
+        await using var tx = await conn.BeginTransactionAsync(ct);
+        try
+        {
+            await conn.ExecuteAsync(new CommandDefinition(
+                "DELETE FROM BuildAlreadyHave WHERE build_id=@id",
+                new { id },
+                (MySqlTransaction)tx,
+                cancellationToken: ct));
+
+            foreach (var slotId in slotIds)
+            {
+                await conn.ExecuteAsync(new CommandDefinition(
+                    "INSERT IGNORE INTO BuildAlreadyHave(build_id, slot_id) VALUES(@id, @slotId)",
+                    new { id, slotId },
+                    (MySqlTransaction)tx,
+                    cancellationToken: ct));
+            }
+
+            await tx.CommitAsync(ct);
+        }
+        catch
+        {
+            await tx.RollbackAsync(ct);
+            throw;
+        }
+
+        return Results.Json(new { ok = true, slot_ids = slotIds });
+    }
+    catch (Exception ex)
+    {
+        return Results.Problem(title: "Update failed", detail: ex.Message, statusCode: 500);
+    }
+}).RequireAuthorization("BuildOwnerOrEditor");
+
 // Slot candidate list (EFT-style picker support)
 app.MapGet("/api/builds/{id:long}/slots/{slotId:long}/candidates", async (long id, long slotId, IConfiguration cfg) =>
 {
@@ -20588,6 +20688,11 @@ sealed class AdminEngineFamilyMergeRequest
 sealed class CompareRequest
 {
     [JsonPropertyName("skus")] public List<string> Skus { get; set; } = new();
+}
+
+sealed class AlreadyHaveSlotsRequest
+{
+    [JsonPropertyName("slot_ids")] public List<long>? SlotIds { get; set; }
 }
 
 sealed class AdminEngineFamilyUsageRow
