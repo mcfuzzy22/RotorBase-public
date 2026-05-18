@@ -191,6 +191,15 @@
             }
         </main>
     </div>
+
+    <div class="sticky bottom-0 z-20 border-t border-border/60 bg-background/95 px-3 py-3 pb-[env(safe-area-inset-bottom)] shadow-md">
+        <div class="flex flex-wrap items-center justify-between gap-2">
+            <span class="text-xs font-medium text-foreground/60">Keep building without selecting a part.</span>
+            <button class="btn btn-primary h-9 px-3 text-xs font-bold" @onclick="BackToPicker">
+                Back to Picker
+            </button>
+        </div>
+    </div>
 </section>
 
 @code {
@@ -389,7 +398,7 @@
         if (key.Contains("oil-control-ring-outer") || key.Contains("oil control ring outer")) return 4;
         if (key.Contains("water-jacket-seal-inner") || key.Contains("water jacket seal inner")) return 4;
         if (key.Contains("water-jacket-seal-outer") || key.Contains("water jacket seal outer")) return 4;
-        if (key.Contains("torrington-bearing") || key.Contains("torrington bearing")) return 2;
+        if (key.Contains("torrington-bearing") || key.Contains("torrington bearing")) return 1;
         if (key.Contains("rotor-bearing") || key.Contains("rotor bearing")) return 2;
 
         return 1;
