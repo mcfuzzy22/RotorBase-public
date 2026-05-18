@@ -370,6 +370,7 @@
             BuildTitle = DefaultBuildTitle();
             PickerState.SetEngine(SelectedEngineId, SelectedEngineCode, clearSelections: false);
             await LoadPickerAsync();
+            ApplyExpandedGroupsFromQuery();
 
             var requestedBuildId = ReadBuildIdFromQuery();
             if (requestedBuildId.HasValue)
@@ -429,6 +430,39 @@
         finally
         {
             IsLoadingPicker = false;
+        }
+    }
+
+    private void ApplyExpandedGroupsFromQuery()
+    {
+        if (PickerData is null)
+            return;
+
+        try
+        {
+            var uri = Nav.ToAbsoluteUri(Nav.Uri);
+            var query = QueryHelpers.ParseQuery(uri.Query);
+            if (!query.TryGetValue("expand", out var values))
+                return;
+
+            var requested = values
+                .SelectMany(value => value?.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries) ?? Array.Empty<string>())
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+            foreach (var group in PickerData.groups)
+            {
+                if (requested.Contains(group.subsystem_key)
+                    || requested.Contains(group.subsystem_name)
+                    || requested.Contains(GroupKey(group))
+                    || (group.subsystem_id.HasValue && requested.Contains(group.subsystem_id.Value.ToString(CultureInfo.InvariantCulture))))
+                {
+                    PickerState.ExpandedGroups.Add(GroupKey(group));
+                }
+            }
+        }
+        catch
+        {
+            // Expansion state is convenience UI only.
         }
     }
 

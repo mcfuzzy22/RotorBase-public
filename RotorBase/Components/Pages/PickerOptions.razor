@@ -324,6 +324,7 @@
 
     private void AddPart(PartRow part)
     {
+        MarkCurrentSubsystemExpanded();
         PickerState.SelectPart(SlotId, new PickerPartSelection
         {
             part_id = part.part_id,
@@ -340,7 +341,22 @@
         BackToPicker();
     }
 
-    private void BackToPicker() => Nav.NavigateTo("/picker");
+    private void BackToPicker()
+    {
+        MarkCurrentSubsystemExpanded();
+        Nav.NavigateTo($"/picker?expand={Uri.EscapeDataString(Component?.subsystem_key ?? "core")}");
+    }
+
+    private void MarkCurrentSubsystemExpanded()
+    {
+        if (Component is null)
+            return;
+
+        if (Component.subsystem_id.HasValue)
+            PickerState.ExpandedGroups.Add($"subsystem:{Component.subsystem_id.Value}");
+
+        PickerState.ExpandedGroups.Add($"subsystem:{Component.subsystem_key}:{Component.subsystem_name}");
+    }
 
     private void SetQuantity(ChangeEventArgs args)
     {
@@ -396,6 +412,9 @@
     {
         public long slot_id { get; set; }
         public string slot_name { get; set; } = string.Empty;
+        public long? subsystem_id { get; set; }
+        public string subsystem_key { get; set; } = string.Empty;
+        public string subsystem_name { get; set; } = string.Empty;
         public string category_slug { get; set; } = string.Empty;
         public string category_name { get; set; } = string.Empty;
     }
