@@ -669,6 +669,8 @@
             return 4;
         if (key.Contains("torrington-bearing") || key.Contains("torrington bearing"))
             return 1;
+        if (key.Contains("stationary-gear-bearing") || key.Contains("stationary gear bearing"))
+            return 2;
         if (key.Contains("rotor-bearing") || key.Contains("rotor bearing"))
             return 2;
 
@@ -688,9 +690,9 @@
         var key = CoreKey(component);
         if (ContainsAny(key, "rotor-housing", "side-plate", "centre-plate", "front-rotor", "rear-rotor"))
             return 10;
-        if (ContainsAny(key, "eccentric-shaft", "counter-weight", "key-weight", "eccentric-pulley", "pulley-bolt-spring", "flywheel-eccentric-nut", "endplay-spacer", "thrust-plate", "torrington-bearing"))
+        if (ContainsAny(key, "eccentric-shaft", "counter-weight", "key-weight", "eccentric-pulley", "pulley-bolt-spring", "flywheel-eccentric-nut", "endplay-spacer", "thrust-plate", "torrington-bearing", "bearing-plate"))
             return 20;
-        if (ContainsAny(key, "stationary-gear", "stat-bearing", "rotor-bearing", "bearing-plate"))
+        if (ContainsAny(key, "stationary-gear", "stationary-gear-bearing", "stat-bearing", "rotor-bearing"))
             return 30;
         if (ContainsAny(key, "apex", "corner-seal", "side-seal", "oil-control-ring", "water-jacket-seal", "thermel-pellet"))
             return 40;
@@ -709,7 +711,7 @@
             30 => "Stationary gears and bearings",
             40 => "Seals and springs",
             50 => "Oiling",
-            60 => "Hardware",
+            60 => "Dowels",
             _ => "Other core parts"
         };
 
@@ -726,6 +728,7 @@
         if (ContainsAny(key, "eccentric-shaft")) return 80;
         if (ContainsAny(key, "thrust-plate")) return 90;
         if (ContainsAny(key, "torrington-bearing")) return 100;
+        if (ContainsAny(key, "bearing-plate")) return 101;
         if (ContainsAny(key, "counter-weight")) return 102;
         if (ContainsAny(key, "eccentric-pulley")) return 104;
         if (ContainsAny(key, "pulley-bolt-spring")) return 106;
