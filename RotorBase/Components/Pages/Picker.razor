@@ -130,10 +130,24 @@
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    @foreach (var component in group.components)
+                                    @{
+                                        var orderedComponents = OrderedComponents(group).ToList();
+                                    }
+                                    @for (var index = 0; index < orderedComponents.Count; index++)
                                     {
+                                        var component = orderedComponents[index];
+                                        var sectionName = CoreSectionName(component);
+                                        var previousSectionName = index > 0 ? CoreSectionName(orderedComponents[index - 1]) : null;
                                         var selected = GetSelection(component.slot_id);
                                         var recommendedQuantity = RecommendedQuantity(component);
+                                        if (IsCoreOnlyPicker && !string.Equals(sectionName, previousSectionName, StringComparison.Ordinal))
+                                        {
+                                            <tr>
+                                                <td colspan="7" class="border-b border-border/60 bg-muted/50 px-3 py-2 text-[11px] font-bold uppercase text-foreground/65">
+                                                    @sectionName
+                                                </td>
+                                            </tr>
+                                        }
                                         <tr class="border-b border-border/60 align-top hover:bg-muted/30">
                                             <td class="px-3 py-2">
                                                 <button class="text-left font-semibold text-primary underline-offset-2 hover:underline"
@@ -571,9 +585,9 @@
             return 4;
         if (key.Contains("oil-control-ring-outer") || key.Contains("oil control ring outer"))
             return 4;
-        if (key.Contains("water-seal-jacket-inner") || key.Contains("water seal jacket inner"))
+        if (key.Contains("water-jacket-seal-inner") || key.Contains("water jacket seal inner"))
             return 4;
-        if (key.Contains("water-seal-jacket-outer") || key.Contains("water seal jacket outer"))
+        if (key.Contains("water-jacket-seal-outer") || key.Contains("water jacket seal outer"))
             return 4;
         if (key.Contains("torrington-bearing") || key.Contains("torrington bearing"))
             return 2;
@@ -582,6 +596,71 @@
 
         return 1;
     }
+
+    private IEnumerable<PickerComponent> OrderedComponents(PickerGroup group)
+        => IsCoreOnlyPicker
+            ? group.components
+                .OrderBy(CoreSectionSort)
+                .ThenBy(CoreItemSort)
+                .ThenBy(component => component.category_name)
+            : group.components;
+
+    private static int CoreSectionSort(PickerComponent component)
+    {
+        var key = CoreKey(component);
+        if (ContainsAny(key, "rotor-housing", "side-plate", "centre-plate", "bearing-plate"))
+            return 10;
+        if (ContainsAny(key, "rotor ", "front-rotor", "rear-rotor", "eccentric-shaft", "counter-weight", "key-weight", "eccentric-pulley", "endplay-spacer", "thrust-plate", "torrington-bearing"))
+            return 20;
+        if (ContainsAny(key, "stationary-gear", "stat-bearing", "rotor-bearing"))
+            return 30;
+        if (ContainsAny(key, "apex", "corner-seal", "side-seal", "oil-control-ring", "water-jacket-seal", "thermel-pellet"))
+            return 40;
+        if (ContainsAny(key, "oil-pump", "oil-metering"))
+            return 50;
+        if (ContainsAny(key, "dowel-pin"))
+            return 60;
+        return 90;
+    }
+
+    private static string CoreSectionName(PickerComponent component)
+        => CoreSectionSort(component) switch
+        {
+            10 => "Housings and plates",
+            20 => "Rotating assembly",
+            30 => "Stationary gears and bearings",
+            40 => "Seals and springs",
+            50 => "Oiling",
+            60 => "Hardware",
+            _ => "Other core parts"
+        };
+
+    private static int CoreItemSort(PickerComponent component)
+    {
+        var key = CoreKey(component);
+        if (ContainsAny(key, "front-side-plate")) return 10;
+        if (ContainsAny(key, "front-rotor-housing")) return 20;
+        if (ContainsAny(key, "centre-plate")) return 30;
+        if (ContainsAny(key, "rear-rotor-housing")) return 40;
+        if (ContainsAny(key, "rear-side-plate")) return 50;
+        if (ContainsAny(key, "front-rotor")) return 60;
+        if (ContainsAny(key, "rear-rotor")) return 70;
+        if (ContainsAny(key, "eccentric-shaft")) return 80;
+        if (ContainsAny(key, "thrust-plate")) return 90;
+        if (ContainsAny(key, "torrington-bearing")) return 100;
+        if (ContainsAny(key, "apex")) return 110;
+        if (ContainsAny(key, "corner-seal")) return 120;
+        if (ContainsAny(key, "side-seal")) return 130;
+        if (ContainsAny(key, "oil-control-ring")) return 140;
+        if (ContainsAny(key, "water-jacket-seal")) return 150;
+        return 500;
+    }
+
+    private static string CoreKey(PickerComponent component)
+        => $"{component.category_slug} {component.category_name} {component.slot_name}".ToLowerInvariant();
+
+    private static bool ContainsAny(string key, params string[] needles)
+        => needles.Any(key.Contains);
 
     private string DefaultBuildTitle()
         => $"{SelectedEngineCode} picker {DateTime.Now:yyyy-MM-dd}";
