@@ -5439,6 +5439,7 @@ app.MapGet("/api/picker/engines/{engineFamilyId:long}/components", async (long e
         if (engine is null)
             return Results.NotFound(new { error = "engine_family_not_found" });
 
+        var coreOnly = string.Equals(Convert.ToString(engine.engine_code), "13B Turbo II S5", StringComparison.OrdinalIgnoreCase);
         var rows = (await conn.QueryAsync(new CommandDefinition(
             @"SELECT DISTINCT
                   CAST(s.slot_id AS SIGNED)              AS slot_id,
@@ -5480,8 +5481,13 @@ app.MapGet("/api/picker/engines/{engineFamilyId:long}/components", async (long e
                AND ps.allow = 1
               JOIN Category c ON c.category_id = ps.category_id
               WHERE s.engine_family_id = @engineFamilyId
+                AND (
+                    @coreOnly = FALSE
+                    OR LOWER(COALESCE(NULLIF(ss.`key`, ''), NULLIF(ss.`name`, ''), '')) = 'core'
+                    OR LOWER(COALESCE(NULLIF(ss.`name`, ''), NULLIF(ss.`key`, ''), '')) = 'core'
+                )
               ORDER BY subsystem_order, subsystem_name, slot_name, slot_key, category_name;",
-            new { engineFamilyId },
+            new { engineFamilyId, coreOnly },
             cancellationToken: ct))).ToList();
 
         var groups = rows

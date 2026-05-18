@@ -94,7 +94,9 @@
         else
         {
             <div class="border-b border-border/60 bg-muted/40 px-3 py-2 text-xs font-medium text-foreground/65">
-                Subsystems start collapsed. Open a subsystem, choose a component, then return here with your place preserved.
+                @(IsCoreOnlyPicker
+                    ? "Core starts collapsed. Open Core, choose a component, then return here with your place preserved."
+                    : "Subsystems start collapsed. Open a subsystem, choose a component, then return here with your place preserved.")
             </div>
             <div class="divide-y divide-border/60">
                 @foreach (var group in PickerData.groups)
@@ -289,6 +291,8 @@
 
     private int ComponentCount => PickerData?.component_count ?? 0;
     private int NeedsCatalogCount => PickerData?.needs_catalog_count ?? 0;
+    private bool IsCoreOnlyPicker => PickerData?.groups.Count == 1
+        && string.Equals(PickerData.groups[0].subsystem_name, "Core", StringComparison.OrdinalIgnoreCase);
     private Dictionary<long, PickerPartSelection> Selections => PickerState.Selections;
     private Dictionary<long, int> Quantities => PickerState.Quantities;
     private int SelectedCount => PickerState.Selections.Count;
