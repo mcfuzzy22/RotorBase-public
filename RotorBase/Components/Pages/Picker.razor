@@ -608,9 +608,9 @@
     private static int CoreSectionSort(PickerComponent component)
     {
         var key = CoreKey(component);
-        if (ContainsAny(key, "rotor-housing", "side-plate", "centre-plate", "bearing-plate"))
+        if (ContainsAny(key, "rotor-housing", "side-plate", "centre-plate", "bearing-plate", "front-rotor", "rear-rotor"))
             return 10;
-        if (ContainsAny(key, "rotor ", "front-rotor", "rear-rotor", "eccentric-shaft", "counter-weight", "key-weight", "eccentric-pulley", "endplay-spacer", "thrust-plate", "torrington-bearing"))
+        if (ContainsAny(key, "eccentric-shaft", "counter-weight", "key-weight", "eccentric-pulley", "endplay-spacer", "thrust-plate", "torrington-bearing"))
             return 20;
         if (ContainsAny(key, "stationary-gear", "stat-bearing", "rotor-bearing"))
             return 30;
@@ -626,7 +626,7 @@
     private static string CoreSectionName(PickerComponent component)
         => CoreSectionSort(component) switch
         {
-            10 => "Housings and plates",
+            10 => "Housings, plates, and rotors",
             20 => "Rotating assembly",
             30 => "Stationary gears and bearings",
             40 => "Seals and springs",
