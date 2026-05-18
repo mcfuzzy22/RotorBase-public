@@ -688,7 +688,7 @@
         var key = CoreKey(component);
         if (ContainsAny(key, "rotor-housing", "side-plate", "centre-plate", "front-rotor", "rear-rotor"))
             return 10;
-        if (ContainsAny(key, "eccentric-shaft", "counter-weight", "key-weight", "eccentric-pulley", "endplay-spacer", "thrust-plate", "torrington-bearing"))
+        if (ContainsAny(key, "eccentric-shaft", "counter-weight", "key-weight", "eccentric-pulley", "pulley-bolt-spring", "flywheel-eccentric-nut", "endplay-spacer", "thrust-plate", "torrington-bearing"))
             return 20;
         if (ContainsAny(key, "stationary-gear", "stat-bearing", "rotor-bearing", "bearing-plate"))
             return 30;
@@ -726,6 +726,11 @@
         if (ContainsAny(key, "eccentric-shaft")) return 80;
         if (ContainsAny(key, "thrust-plate")) return 90;
         if (ContainsAny(key, "torrington-bearing")) return 100;
+        if (ContainsAny(key, "counter-weight")) return 102;
+        if (ContainsAny(key, "eccentric-pulley")) return 104;
+        if (ContainsAny(key, "pulley-bolt-spring")) return 106;
+        if (ContainsAny(key, "flywheel-eccentric-nut")) return 108;
+        if (ContainsAny(key, "endplay-spacer")) return 109;
         if (ContainsAny(key, "apex")) return 110;
         if (ContainsAny(key, "corner-seal")) return 120;
         if (ContainsAny(key, "side-seal")) return 130;
