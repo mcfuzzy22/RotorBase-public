@@ -383,8 +383,8 @@
     {
         var key = $"{component.category_slug} {component.category_name} {component.slot_name}".ToLowerInvariant();
 
-        if (key.Contains("apex-seal-spring-big") || key.Contains("apex seal spring (big)")) return 6;
-        if (key.Contains("apex-spring-small") || key.Contains("apex seal spring (small)")) return 6;
+        if (key.Contains("apex-seal-spring-outer") || key.Contains("outer apex seal spring") || key.Contains("apex-seal-spring-big") || key.Contains("apex seal spring (big)")) return 6;
+        if (key.Contains("apex-seal-spring-inner") || key.Contains("inner apex seal spring") || key.Contains("apex-spring-small") || key.Contains("apex seal spring (small)")) return 6;
         if (key.Contains("apex-seals") || key.Contains("apex seals")) return 6;
         if (key.Contains("corner-seal-springs") || key.Contains("corner seal springs")) return 12;
         if (key.Contains("corner-seals") || key.Contains("corner seals")) return 12;

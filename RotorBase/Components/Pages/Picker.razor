@@ -637,9 +637,9 @@
     {
         var key = $"{component.category_slug} {component.category_name} {component.slot_name}".ToLowerInvariant();
 
-        if (key.Contains("apex-seal-spring-big") || key.Contains("apex seal spring (big)"))
+        if (key.Contains("apex-seal-spring-outer") || key.Contains("outer apex seal spring") || key.Contains("apex-seal-spring-big") || key.Contains("apex seal spring (big)"))
             return 6;
-        if (key.Contains("apex-spring-small") || key.Contains("apex seal spring (small)"))
+        if (key.Contains("apex-seal-spring-inner") || key.Contains("inner apex seal spring") || key.Contains("apex-spring-small") || key.Contains("apex seal spring (small)"))
             return 6;
         if (key.Contains("apex-seals") || key.Contains("apex seals"))
             return 6;
@@ -734,7 +734,10 @@
         if (ContainsAny(key, "pulley-bolt-spring")) return 106;
         if (ContainsAny(key, "flywheel-eccentric-nut")) return 108;
         if (ContainsAny(key, "endplay-spacer")) return 109;
-        if (ContainsAny(key, "apex")) return 110;
+        if (ContainsAny(key, "apex-seals")) return 110;
+        if (ContainsAny(key, "apex-seal-spring-inner", "inner apex seal spring", "apex-spring-small")) return 112;
+        if (ContainsAny(key, "apex-seal-spring-outer", "outer apex seal spring", "apex-seal-spring-big")) return 114;
+        if (ContainsAny(key, "apex")) return 116;
         if (ContainsAny(key, "corner-seal")) return 120;
         if (ContainsAny(key, "side-seal")) return 130;
         if (ContainsAny(key, "oil-control-ring")) return 140;
