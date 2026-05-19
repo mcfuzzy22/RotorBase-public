@@ -151,6 +151,12 @@
                                             <div class="min-w-0">
                                                 <div class="truncate font-semibold text-foreground">@part.name</div>
                                                 <div class="text-[11px] text-foreground/55">@part.sku</div>
+                                                @if (!string.IsNullOrWhiteSpace(part.description))
+                                                {
+                                                    <div class="mt-1 max-w-xl rounded-md border border-primary/20 bg-primary/5 px-2 py-1 text-[11px] font-medium leading-snug text-foreground/75">
+                                                        @part.description
+                                                    </div>
+                                                }
                                             </div>
                                         </div>
                                     </td>
@@ -440,6 +446,7 @@
         public long part_id { get; set; }
         public string sku { get; set; } = string.Empty;
         public string name { get; set; } = string.Empty;
+        public string? description { get; set; }
         public string brand { get; set; } = string.Empty;
         public string? image_url { get; set; }
         public decimal? best_price { get; set; }

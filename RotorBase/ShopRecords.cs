@@ -32,6 +32,7 @@ public record ShopSearchRow(
     [property: JsonPropertyName("part_id")] long PartId,
     [property: JsonPropertyName("sku")] string Sku,
     [property: JsonPropertyName("name")] string Name,
+    [property: JsonPropertyName("description")] string? Description,
     [property: JsonPropertyName("brand")] string Brand,
     [property: JsonPropertyName("image_url")] string? ImageUrl,
     [property: JsonPropertyName("is_kit")] bool IsKit,
