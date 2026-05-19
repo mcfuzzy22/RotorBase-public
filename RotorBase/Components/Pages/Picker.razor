@@ -702,13 +702,13 @@
         var key = CoreKey(component);
         if (ContainsAny(key, "rotor-housing", "side-plate", "centre-plate", "front-rotor", "rear-rotor"))
             return 10;
-        if (ContainsAny(key, "eccentric-shaft", "counter-weight", "key-weight", "eccentric-pulley", "pulley-bolt-spring", "flywheel-eccentric-nut", "endplay-spacer", "thrust-plate", "torrington-bearing", "bearing-plate", "thermel-pellet"))
+        if (ContainsAny(key, "eccentric-shaft", "counter-weight", "key-weight", "eccentric-pulley", "pulley-bolt-spring", "flywheel-eccentric-nut", "endplay-spacer", "thrust-plate", "torrington-bearing", "bearing-plate", "thermel-pellet", "oil-pump", "oil-metering"))
             return 20;
         if (ContainsAny(key, "stationary-gear", "stationary-gear-bearing", "stat-bearing", "rotor-bearing"))
             return 30;
         if (ContainsAny(key, "apex", "corner-seal", "side-seal", "oil-control-ring", "water-jacket-seal"))
             return 40;
-        if (ContainsAny(key, "oil-pump", "oil-metering"))
+        if (ContainsAny(key, "legacy-oiling-section-disabled"))
             return 50;
         if (ContainsAny(key, "dowel-pin"))
             return 60;
@@ -761,6 +761,8 @@
         if (ContainsAny(key, "oil-control-ring-spring-rear-outer")) return 150;
         if (ContainsAny(key, "oil-control-ring")) return 152;
         if (ContainsAny(key, "water-jacket-seal")) return 150;
+        if (ContainsAny(key, "oil-pump")) return 154;
+        if (ContainsAny(key, "oil-metering")) return 156;
         return 500;
     }
 
