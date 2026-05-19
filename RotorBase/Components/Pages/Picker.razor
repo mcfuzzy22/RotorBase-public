@@ -655,9 +655,21 @@
             return 4;
         if (key.Contains("engine-dowel-pin") || key.Contains("dowel pin"))
             return 4;
+        if (key.Contains("oil-control-ring-spring-front-inner") || key.Contains("oil control ring spring front inner"))
+            return 2;
+        if (key.Contains("oil-control-ring-spring-front-outer") || key.Contains("oil control ring spring front outer"))
+            return 2;
+        if (key.Contains("oil-control-ring-spring-rear-inner") || key.Contains("oil control ring spring rear inner"))
+            return 2;
+        if (key.Contains("oil-control-ring-spring-rear-outer") || key.Contains("oil control ring spring rear outer"))
+            return 2;
         if (key.Contains("oil-control-ring-inner-springs") || key.Contains("oil control ring inner springs"))
             return 4;
         if (key.Contains("oil-control-ring-outer-springs") || key.Contains("oil control ring outer springs"))
+            return 4;
+        if (key.Contains("oil-control-ring-small") || key.Contains("oil control ring small"))
+            return 4;
+        if (key.Contains("oil-control-ring-large") || key.Contains("oil control ring large"))
             return 4;
         if (key.Contains("oil-control-ring-inner") || key.Contains("oil control ring inner"))
             return 4;
@@ -690,11 +702,11 @@
         var key = CoreKey(component);
         if (ContainsAny(key, "rotor-housing", "side-plate", "centre-plate", "front-rotor", "rear-rotor"))
             return 10;
-        if (ContainsAny(key, "eccentric-shaft", "counter-weight", "key-weight", "eccentric-pulley", "pulley-bolt-spring", "flywheel-eccentric-nut", "endplay-spacer", "thrust-plate", "torrington-bearing", "bearing-plate"))
+        if (ContainsAny(key, "eccentric-shaft", "counter-weight", "key-weight", "eccentric-pulley", "pulley-bolt-spring", "flywheel-eccentric-nut", "endplay-spacer", "thrust-plate", "torrington-bearing", "bearing-plate", "thermel-pellet"))
             return 20;
         if (ContainsAny(key, "stationary-gear", "stationary-gear-bearing", "stat-bearing", "rotor-bearing"))
             return 30;
-        if (ContainsAny(key, "apex", "corner-seal", "side-seal", "oil-control-ring", "water-jacket-seal", "thermel-pellet"))
+        if (ContainsAny(key, "apex", "corner-seal", "side-seal", "oil-control-ring", "water-jacket-seal"))
             return 40;
         if (ContainsAny(key, "oil-pump", "oil-metering"))
             return 50;
@@ -734,13 +746,20 @@
         if (ContainsAny(key, "pulley-bolt-spring")) return 106;
         if (ContainsAny(key, "flywheel-eccentric-nut")) return 108;
         if (ContainsAny(key, "endplay-spacer")) return 109;
+        if (ContainsAny(key, "thermel-pellet")) return 111;
         if (ContainsAny(key, "apex-seals")) return 110;
         if (ContainsAny(key, "apex-seal-spring-inner", "inner apex seal spring", "apex-spring-small")) return 112;
         if (ContainsAny(key, "apex-seal-spring-outer", "outer apex seal spring", "apex-seal-spring-big")) return 114;
         if (ContainsAny(key, "apex")) return 116;
         if (ContainsAny(key, "corner-seal")) return 120;
         if (ContainsAny(key, "side-seal")) return 130;
-        if (ContainsAny(key, "oil-control-ring")) return 140;
+        if (ContainsAny(key, "oil-control-ring-small")) return 140;
+        if (ContainsAny(key, "oil-control-ring-large")) return 142;
+        if (ContainsAny(key, "oil-control-ring-spring-front-inner")) return 144;
+        if (ContainsAny(key, "oil-control-ring-spring-front-outer")) return 146;
+        if (ContainsAny(key, "oil-control-ring-spring-rear-inner")) return 148;
+        if (ContainsAny(key, "oil-control-ring-spring-rear-outer")) return 150;
+        if (ContainsAny(key, "oil-control-ring")) return 152;
         if (ContainsAny(key, "water-jacket-seal")) return 150;
         return 500;
     }
